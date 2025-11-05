@@ -1,9 +1,16 @@
 {
-    "domain": "esb_smart_meter",
-    "name": "ESB Smart Meter",
-    "version": "1.0",
-    "requirements": ["requests", "beautifulsoup4"],
-    "dependencies": [],
-    "codeowners": ["@robinj1995"],
-    "config_flow": true
-  }
+  "domain": "esb_smart_meter",
+  "name": "ESB Smart Meter",
+  "version": "1.1.0",
+  "documentation": "https://github.com/antoine-voiry/home-assistant-esb-smart-meter-integration",
+  "issue_tracker": "https://github.com/antoine-voiry/home-assistant-esb-smart-meter-integration/issues",
+  "dependencies": [],
+  "codeowners": ["@antoine-voiry"],
+  "config_flow": true,
+  "dhcp": [],
+  "homeassistant": "2023.1.0",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "ssdp": [],
+  "zeroconf": []
+}
