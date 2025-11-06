@@ -1,0 +1,13 @@
+name: "CodeQL Config"
+
+# Paths to ignore for specific queries
+paths-ignore:
+  - custom_components/esb_smart_meter/user_agents.py
+
+# Query filters to suppress specific warnings
+query-filters:
+  # Ignore string concatenation warnings in user_agents.py
+  - exclude:
+      id: py/string-concatenation
+      paths:
+        - custom_components/esb_smart_meter/user_agents.py
