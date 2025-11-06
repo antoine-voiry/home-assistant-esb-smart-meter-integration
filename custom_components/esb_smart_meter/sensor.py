@@ -454,7 +454,7 @@ class ESBDataApi:
 
             # REQUEST 3: GET CombinedSigninAndSignup/confirmed
             confirm_params = {
-                "rememberMe": False,
+                "rememberMe": "false",
                 "csrf_token": settings["csrf"],
                 "tx": settings["transId"],
                 "p": "B2C_1A_signup_signin",
