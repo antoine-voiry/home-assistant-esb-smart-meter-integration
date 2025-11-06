@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+# copy from https://github.com/badger707/esb-smart-meter-reading-automation/blob/main/README.md
 import requests
 from random import randint
 from time import sleep
@@ -7,6 +7,11 @@ from bs4 import BeautifulSoup   # pip install beautifulsoup4
 import re as re
 import json
 import csv
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ## Debug Mode print messages, set to True or False ##
 debug_mode=True
@@ -14,10 +19,21 @@ debug_mode=True
 ###### START OF SCRIPT ###### 
 
 if debug_mode:print("##### REQUEST 1 -- GET [https://myaccount.esbnetworks.ie/] ######")
-meter_mprn = "10301831754"
-esb_user_name = "antoine.voiry@gmail.com"
-esb_password = "CELINE4me456!"
+
+# Read credentials from environment variables
+meter_mprn = os.getenv("ESB_MPRN")
+esb_user_name = os.getenv("ESB_USERNAME")
+esb_password = os.getenv("ESB_PASSWORD")
 user_agent = "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0"
+
+# Validate that required environment variables are set
+if not all([meter_mprn, esb_user_name, esb_password]):
+    print("ERROR: Missing required environment variables!")
+    print("Please ensure the following are set in your .env file:")
+    print("  ESB_MPRN=your_meter_number")
+    print("  ESB_USERNAME=your_email@example.com")
+    print("  ESB_PASSWORD=your_password")
+    raise SystemExit(1)
 
 session = requests.Session()
 session.headers.update({
