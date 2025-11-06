@@ -28,6 +28,7 @@ from .const import (
     CSV_COLUMN_VALUE,
     CSV_DATE_FORMAT,
     DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_WAIT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TIMEOUT,
     DOMAIN,
@@ -703,14 +704,13 @@ class ESBDataApi:
                 # Retry on network errors
                 last_error = err
                 if attempt < DEFAULT_MAX_RETRIES - 1:
-                    wait_time = 2**attempt
                     _LOGGER.warning(
                         "Fetch attempt %d failed: %s. Retrying in %d seconds...",
                         attempt + 1,
                         err,
-                        wait_time,
+                        DEFAULT_RETRY_WAIT,
                     )
-                    await asyncio.sleep(wait_time)
+                    await asyncio.sleep(DEFAULT_RETRY_WAIT)
                 else:
                     _LOGGER.error(
                         "All %d fetch attempts failed. Last error: %s",

@@ -9,9 +9,10 @@ CONF_PASSWORD = "password"
 CONF_MPRN = "mprn"
 
 # Default values
-DEFAULT_SCAN_INTERVAL = timedelta(hours=12)
+DEFAULT_SCAN_INTERVAL = timedelta(hours=24)  # Retry next day if all attempts fail
 DEFAULT_TIMEOUT = 30
-DEFAULT_MAX_RETRIES = 3
+DEFAULT_MAX_RETRIES = 5
+DEFAULT_RETRY_WAIT = 120  # Wait 2 minutes (120 seconds) between retries
 MAX_CSV_SIZE_MB = 10  # Maximum CSV response size in MB
 MAX_DATA_AGE_DAYS = 90  # Maximum age of data to keep in memory
 
