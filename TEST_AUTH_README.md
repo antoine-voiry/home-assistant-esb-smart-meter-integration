@@ -1,21 +1,22 @@
 # ESB Smart Meter Authentication Test Script
 
-This standalone script helps debug authentication issues with the ESB Smart Meter integration.
+This standalone script helps test and debug authentication with the ESB Smart Meter integration using the actual production code.
 
 ## Purpose
 
 The script will:
-1. Attempt to authenticate with ESB Networks
-2. Save HTML responses at each step for inspection
-3. If authentication succeeds, attempt to fetch meter data
-4. Provide detailed logging to identify where failures occur
+1. Use the actual `ESBDataApi` class from `sensor.py` (no code duplication)
+2. Run the complete 8-step authentication flow
+3. Download and parse meter data
+4. Display usage statistics (today, last 24h, this week, month, etc.)
+5. Provide detailed debug logging to identify any issues
 
 ## Requirements
 
 Make sure you have the required dependencies installed:
 
 ```bash
-pip install aiohttp beautifulsoup4
+pip install aiohttp beautifulsoup4 python-dotenv
 ```
 
 Or install from the project requirements:
@@ -26,25 +27,53 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Method 1: Command Line Arguments
+
 ```bash
 python test_auth.py <username> <password> <mprn>
 ```
 
-### Example
+**Example:**
 
 ```bash
-python test_auth.py your.email@example.com YourPassword123 1234567890
+python test_auth.py your.email@example.com YourPassword123 12345678901
 ```
 
-## Output Files
+### Method 2: Environment Variables (Recommended for esb-smart-meter-reader.py)
 
-The script will create several files to help debug issues:
+For the `esb-smart-meter-reader.py` script, use environment variables:
 
-- `step1_initial_page.html` - The initial ESB login page
-- `step2_login_response.html` - Response after submitting credentials
-- `step3_confirm_response.html` - Response from the confirmation step
-- `step4_final_response.html` - Final authentication response
-- `data_response.csv` - The meter data (if authentication succeeds)
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` and add your credentials:
+```bash
+ESB_USERNAME=your.email@example.com
+ESB_PASSWORD=YourPassword123
+ESB_MPRN=12345678901
+```
+
+3. Run the script:
+```bash
+python esb-smart-meter-reader.py
+```
+
+**Note:** The `.env` file is in `.gitignore` and will never be committed to git.
+
+## Output
+
+The script will display:
+- Authentication progress through all 8 steps
+- Success/failure status
+- Energy usage statistics:
+  - Today's usage
+  - Last 24 hours
+  - This week
+  - Last 7 days
+  - This month
+  - Last 30 days
 
 ## Understanding the Output
 
