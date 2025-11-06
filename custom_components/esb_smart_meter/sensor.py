@@ -361,6 +361,7 @@ class ESBDataApi:
         try:
             # REQUEST 1: Get CSRF token and settings
             _LOGGER.debug("Request 1: Getting CSRF token from ESB")
+            _LOGGER.debug("Request 1 URL: %s", ESB_LOGIN_URL)
             async with self._session.get(
                 ESB_LOGIN_URL,
                 headers=headers,
@@ -368,7 +369,10 @@ class ESBDataApi:
                 timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
+                _LOGGER.debug("Request 1 response status: %s", response.status)
+                _LOGGER.debug("Request 1 final URL: %s", response.url)
                 content = await response.text()
+                _LOGGER.debug("Request 1 response length: %d bytes", len(content))
                 settings_match = re.findall(r"(?<=var SETTINGS = )\S*;", content)
                 if not settings_match:
                     raise ValueError("Could not find SETTINGS in ESB login page")
@@ -406,6 +410,7 @@ class ESBDataApi:
                 "request_type": "RESPONSE",
             }
             _LOGGER.debug("Request 2: Submitting login credentials")
+            _LOGGER.debug("Request 2 URL: %s", login_url)
             async with self._session.post(
                 login_url,
                 data=login_data,
@@ -413,6 +418,8 @@ class ESBDataApi:
                 timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
+                _LOGGER.debug("Request 2 response status: %s", response.status)
+                _LOGGER.debug("Request 2 response URL: %s", response.url)
                 _LOGGER.debug("Login successful")
 
             # REQUEST 3: GET CombinedSigninAndSignup/confirmed
@@ -433,6 +440,8 @@ class ESBDataApi:
                 "Sec-Fetch-Site": "same-origin",
             }
             _LOGGER.debug("Request 3: Confirming login")
+            _LOGGER.debug("Request 3 URL: %s", confirm_url)
+            _LOGGER.debug("Request 3 params: %s", confirm_params)
             async with self._session.get(
                 confirm_url,
                 params=confirm_params,
@@ -440,10 +449,20 @@ class ESBDataApi:
                 timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
+                _LOGGER.debug("Request 3 response status: %s", response.status)
+                _LOGGER.debug("Request 3 response URL: %s", response.url)
                 content = await response.text()
+                _LOGGER.debug("Request 3 response length: %d bytes", len(content))
+                _LOGGER.debug("Request 3 response preview (first 500 chars): %s", content[:500])
                 soup = BeautifulSoup(content, "html.parser")
                 form = soup.find("form", {"id": "auto"})
                 if not form:
+                    _LOGGER.error("Could not find form with id='auto'. Looking for any forms...")
+                    all_forms = soup.find_all("form")
+                    _LOGGER.error("Found %d forms in response", len(all_forms))
+                    for idx, f in enumerate(all_forms):
+                        _LOGGER.error("Form %d: id=%s, action=%s", idx, f.get("id"), f.get("action"))
+                    _LOGGER.debug("Full HTML response:\n%s", content)
                     raise ValueError("Could not find auto-submit form in ESB response")
 
                 # Extract form fields
