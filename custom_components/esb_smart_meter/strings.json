@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ESB Smart Meter Setup",
+        "description": "Enter your ESB Networks account credentials and MPRN (11-digit meter number)",
+        "data": {
+          "username": "Email Address",
+          "password": "Password",
+          "mprn": "MPRN (11 digits)"
+        },
+        "data_description": {
+          "mprn": "Your 11-digit Meter Point Reference Number"
+        }
+      }
+    },
+    "error": {
+      "invalid_mprn": "MPRN must be exactly 11 digits",
+      "mprn_exists": "This MPRN is already configured",
+      "cannot_connect": "Failed to connect to ESB Networks",
+      "invalid_auth": "Invalid username or password",
+      "unknown": "An unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This MPRN is already configured"
+    }
+  }
+}
