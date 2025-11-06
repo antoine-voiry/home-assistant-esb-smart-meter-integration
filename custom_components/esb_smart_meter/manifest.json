@@ -8,9 +8,8 @@
   "codeowners": ["@antoine-voiry"],
   "config_flow": true,
   "dhcp": [],
-  "homeassistant": "2023.1.0",
   "iot_class": "cloud_polling",
-  "requirements": [],
+  "requirements": ["beautifulsoup4>=4.12.0"],
   "ssdp": [],
   "zeroconf": []
 }

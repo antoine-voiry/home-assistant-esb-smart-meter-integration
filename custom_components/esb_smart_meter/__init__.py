@@ -3,6 +3,7 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
@@ -10,6 +11,9 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[str] = ["sensor"]
+
+# This integration is configured via config entries only
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
