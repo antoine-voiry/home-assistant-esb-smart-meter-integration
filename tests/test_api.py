@@ -54,23 +54,66 @@ class TestESBDataApi:
         ))
         mock_confirm_response.__aexit__ = AsyncMock(return_value=None)
 
-        # Mock 4: POST final form with cookies
-        mock_final_response = MagicMock()
-        mock_final_response.__aenter__ = AsyncMock(return_value=MagicMock(
+        # Mock 4: POST signin-oidc
+        mock_signin_response = MagicMock()
+        mock_signin_response.__aenter__ = AsyncMock(return_value=MagicMock(
             status=200,
-            text=AsyncMock(return_value="Confirmed"),
+            text=AsyncMock(return_value="Signin successful"),
             raise_for_status=MagicMock(),
             headers={},
-            cookies={'test_cookie': 'test_value'}
         ))
-        mock_final_response.__aexit__ = AsyncMock(return_value=None)
+        mock_signin_response.__aexit__ = AsyncMock(return_value=None)
 
-        # Mock GET calls (initial CSRF get, confirm get)
-        # Mock POST calls (login post, final form post)
-        with patch.object(esb_api._session, 'get', side_effect=[mock_login_response, mock_confirm_response]):
-            with patch.object(esb_api._session, 'post', side_effect=[mock_post_login_response, mock_final_response]):
-                cookies = await esb_api._ESBDataApi__login()
-                assert cookies is not None
+        # Mock 5: GET myaccount page
+        mock_myaccount_response = MagicMock()
+        mock_myaccount_response.__aenter__ = AsyncMock(return_value=MagicMock(
+            status=200,
+            text=AsyncMock(return_value="<html>My Account</html>"),
+            raise_for_status=MagicMock(),
+            headers={}
+        ))
+        mock_myaccount_response.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock 6: GET consumption page
+        mock_consumption_response = MagicMock()
+        mock_consumption_response.__aenter__ = AsyncMock(return_value=MagicMock(
+            status=200,
+            text=AsyncMock(return_value="<html>Consumption</html>"),
+            raise_for_status=MagicMock(),
+            headers={}
+        ))
+        mock_consumption_response.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock 7: GET token
+        mock_token_response = MagicMock()
+        mock_token_response.__aenter__ = AsyncMock(return_value=MagicMock(
+            status=200,
+            json=AsyncMock(return_value={"token": "test-download-token"}),
+            raise_for_status=MagicMock(),
+            headers={}
+        ))
+        mock_token_response.__aexit__ = AsyncMock(return_value=None)
+
+        # Mock asyncio.sleep to avoid waiting during tests
+        with patch('asyncio.sleep', new_callable=AsyncMock):
+            # Mock GET calls (requests 1, 3, 5, 6, 7)
+            # Mock POST calls (requests 2, 4)
+            with patch.object(esb_api._session, 'get', side_effect=[
+                mock_login_response, 
+                mock_confirm_response,
+                mock_myaccount_response,
+                mock_consumption_response,
+                mock_token_response
+            ]):
+                with patch.object(esb_api._session, 'post', side_effect=[
+                    mock_post_login_response, 
+                    mock_signin_response
+                ]):
+                    result = await esb_api._ESBDataApi__login()
+                    assert result is not None
+                    assert "download_token" in result
+                    assert "user_agent" in result
+                    assert result["download_token"] == "test-download-token"
 
     @pytest.mark.asyncio
     async def test_login_missing_csrf(self, esb_api):
@@ -111,8 +154,8 @@ class TestESBDataApi:
         ))
         mock_response.__aexit__ = AsyncMock(return_value=None)
 
-        with patch.object(esb_api._session, 'get', return_value=mock_response):
-            csv_data = await esb_api._ESBDataApi__fetch_data()
+        with patch.object(esb_api._session, 'post', return_value=mock_response):
+            csv_data = await esb_api._ESBDataApi__fetch_data("test-token", "test-user-agent")
             assert csv_data == sample_csv_data
 
     @pytest.mark.asyncio
@@ -131,9 +174,9 @@ class TestESBDataApi:
         ))
         mock_response.__aexit__ = AsyncMock(return_value=None)
 
-        with patch.object(esb_api._session, 'get', return_value=mock_response):
+        with patch.object(esb_api._session, 'post', return_value=mock_response):
             with pytest.raises(ValueError, match="CSV response too large"):
-                await esb_api._ESBDataApi__fetch_data()
+                await esb_api._ESBDataApi__fetch_data("test-token", "test-user-agent")
 
     @pytest.mark.asyncio
     async def test_csv_to_dict(self, esb_api, sample_csv_data):

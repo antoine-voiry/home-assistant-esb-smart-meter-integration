@@ -21,7 +21,10 @@ ESB_AUTH_BASE_URL = (
     "https://login.esbnetworks.ie/esbntwkscustportalprdb2c01.onmicrosoft.com"
     "/B2C_1A_signup_signin"
 )
-ESB_DATA_URL = "https://myaccount.esbnetworks.ie/DataHub/DownloadHdf"
+ESB_MYACCOUNT_URL = "https://myaccount.esbnetworks.ie"
+ESB_CONSUMPTION_URL = "https://myaccount.esbnetworks.ie/Api/HistoricConsumption"
+ESB_TOKEN_URL = "https://myaccount.esbnetworks.ie/af/t"
+ESB_DOWNLOAD_URL = "https://myaccount.esbnetworks.ie/DataHub/DownloadHdfPeriodic"
 
 # CSV columns expected from ESB
 CSV_COLUMN_DATE = "Read Date and End Time"

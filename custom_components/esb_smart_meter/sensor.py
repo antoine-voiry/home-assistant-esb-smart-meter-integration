@@ -8,7 +8,6 @@ from abc import abstractmethod
 from datetime import datetime, timedelta
 from io import StringIO
 from typing import Any
-from urllib.parse import quote
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -33,8 +32,11 @@ from .const import (
     DEFAULT_TIMEOUT,
     DOMAIN,
     ESB_AUTH_BASE_URL,
-    ESB_DATA_URL,
+    ESB_CONSUMPTION_URL,
+    ESB_DOWNLOAD_URL,
     ESB_LOGIN_URL,
+    ESB_MYACCOUNT_URL,
+    ESB_TOKEN_URL,
     MANUFACTURER,
     MAX_CSV_SIZE_MB,
     MAX_DATA_AGE_DAYS,
@@ -336,15 +338,52 @@ class ESBDataApi:
         self._mprn = mprn
         self._timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
 
+    def __get_random_user_agent(self) -> str:
+        """Get a random user agent from popular browsers."""
+        from random import choice
+        
+        user_agents = [
+            # Chrome on Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            # Chrome on macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            # Chrome on Linux
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            # Edge on Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+            # Edge on macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+            # Firefox on Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+            # Firefox on macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
+            # Firefox on Linux
+            "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+        ]
+        return choice(user_agents)
+
     async def __login(self) -> dict[str, str]:
-        """Login to ESB and return cookies."""
+        """Login to ESB and return cookies (following the complete 8-step flow)."""
+        from random import randint
+        
+        # Select a random user agent and use it consistently throughout the session
+        user_agent = self.__get_random_user_agent()
+        _LOGGER.debug("Using User-Agent: %s", user_agent)
+        
         headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0"
+            "User-Agent": user_agent
         }
 
         try:
-            # Get CSRF token and settings
-            _LOGGER.debug("Getting CSRF token from ESB")
+            # REQUEST 1: Get CSRF token and settings
+            _LOGGER.debug("Request 1: Getting CSRF token from ESB")
             async with self._session.get(
                 ESB_LOGIN_URL,
                 headers=headers,
@@ -364,32 +403,42 @@ class ESBDataApi:
 
                 _LOGGER.debug("Got CSRF token and transaction ID")
 
-            # Update headers with CSRF token
-            headers["x-csrf-token"] = settings["csrf"]
+            # Add delay between requests
+            await asyncio.sleep(randint(10, 20))
 
-            # Login - Note: password is intentionally not logged
+            # REQUEST 2: POST SelfAsserted - Login with credentials
             login_url = (
                 f"{ESB_AUTH_BASE_URL}/SelfAsserted?"
                 f"tx={settings['transId']}&p=B2C_1A_signup_signin"
             )
+            login_headers = {
+                **headers,
+                "x-csrf-token": settings["csrf"],
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With": "XMLHttpRequest",
+                "Origin": "https://login.esbnetworks.ie",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+            }
             login_data = {
                 "signInName": self._username,
                 "password": self._password,
                 "request_type": "RESPONSE",
             }
-            _LOGGER.debug(
-                "Submitting login credentials for user: %s", self._username
-            )
+            _LOGGER.debug("Request 2: Submitting login credentials")
             async with self._session.post(
                 login_url,
                 data=login_data,
-                headers=headers,
+                headers=login_headers,
                 timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
                 _LOGGER.debug("Login successful")
 
-            # Confirm login
+            # REQUEST 3: GET CombinedSigninAndSignup/confirmed
             confirm_params = {
                 "rememberMe": False,
                 "csrf_token": settings["csrf"],
@@ -399,11 +448,18 @@ class ESBDataApi:
             confirm_url = (
                 f"{ESB_AUTH_BASE_URL}/api/CombinedSigninAndSignup/confirmed"
             )
-            _LOGGER.debug("Confirming login")
+            confirm_headers = {
+                **headers,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+            }
+            _LOGGER.debug("Request 3: Confirming login")
             async with self._session.get(
                 confirm_url,
                 params=confirm_params,
-                headers=headers,
+                headers=confirm_headers,
                 timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
@@ -413,16 +469,13 @@ class ESBDataApi:
                 if not form:
                     raise ValueError("Could not find auto-submit form in ESB response")
 
-                # Safely extract form fields with null checks
+                # Extract form fields
                 state_input = form.find("input", {"name": "state"})
                 client_info_input = form.find("input", {"name": "client_info"})
                 code_input = form.find("input", {"name": "code"})
 
-                if (not state_input or not client_info_input
-                        or not code_input):
-                    raise ValueError(
-                        "Missing required form fields in ESB response"
-                    )
+                if not state_input or not client_info_input or not code_input:
+                    raise ValueError("Missing required form fields in ESB response")
 
                 state = state_input.get("value")
                 client_info = client_info_input.get("value")
@@ -434,50 +487,142 @@ class ESBDataApi:
 
                 _LOGGER.debug("Extracted form data")
 
-            # Submit final form
-            final_data = {
+            # Add delay
+            await asyncio.sleep(randint(2, 5))
+
+            # REQUEST 4: POST signin-oidc
+            signin_headers = {
+                **headers,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://login.esbnetworks.ie",
+                "Referer": "https://login.esbnetworks.ie/",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-site",
+            }
+            signin_data = {
                 "state": state,
                 "client_info": client_info,
                 "code": code,
             }
-            _LOGGER.debug("Submitting final authentication form")
+            _LOGGER.debug("Request 4: Submitting signin-oidc")
             async with self._session.post(
                 action_url,
-                data=final_data,
-                headers=headers,
+                data=signin_data,
+                headers=signin_headers,
+                allow_redirects=False,
                 timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
-                _LOGGER.info(
-                    "Authentication completed successfully for user: %s",
-                    self._username
-                )
-                return dict(
-                    self._session.cookie_jar.filter_cookies(ESB_LOGIN_URL)
-                )
+                _LOGGER.debug("Signin-oidc successful")
+
+            # REQUEST 5: GET myaccount.esbnetworks.ie
+            myaccount_headers = {
+                **headers,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Referer": "https://login.esbnetworks.ie/",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-site",
+            }
+            _LOGGER.debug("Request 5: Accessing my account page")
+            async with self._session.get(
+                ESB_MYACCOUNT_URL,
+                headers=myaccount_headers,
+                timeout=self._timeout,
+            ) as response:
+                response.raise_for_status()
+                _LOGGER.debug("My account page loaded")
+
+            # Add delay
+            await asyncio.sleep(randint(3, 8))
+
+            # REQUEST 6: GET Api/HistoricConsumption
+            consumption_headers = {
+                **headers,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Referer": f"{ESB_MYACCOUNT_URL}/",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+            }
+            _LOGGER.debug("Request 6: Loading historic consumption page")
+            async with self._session.get(
+                ESB_CONSUMPTION_URL,
+                headers=consumption_headers,
+                timeout=self._timeout,
+            ) as response:
+                response.raise_for_status()
+                _LOGGER.debug("Historic consumption page loaded")
+
+            # Add delay
+            await asyncio.sleep(randint(2, 5))
+
+            # REQUEST 7: GET file download token
+            token_headers = {
+                **headers,
+                "Accept": "*/*",
+                "X-Returnurl": ESB_CONSUMPTION_URL,
+                "Referer": ESB_CONSUMPTION_URL,
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+            }
+            _LOGGER.debug("Request 7: Getting file download token")
+            async with self._session.get(
+                ESB_TOKEN_URL,
+                headers=token_headers,
+                timeout=self._timeout,
+            ) as response:
+                response.raise_for_status()
+                token_data = await response.json()
+                download_token = token_data.get("token")
+                if not download_token:
+                    raise ValueError("Failed to get download token")
+                _LOGGER.debug("Got download token")
+
+            _LOGGER.info("Authentication completed successfully for user: %s", self._username)
+            return {"download_token": download_token, "user_agent": user_agent}
 
         except aiohttp.ClientError as err:
             _LOGGER.error("Network error during login: %s", err)
             raise
         except json.JSONDecodeError as err:
             _LOGGER.error("Invalid JSON in ESB response: %s", err)
-            raise ValueError(
-                "Invalid authentication response from ESB"
-            ) from err
+            raise ValueError("Invalid authentication response from ESB") from err
         except (KeyError, ValueError, AttributeError) as err:
             _LOGGER.error("Error parsing ESB response: %s", err)
             raise
 
-    async def __fetch_data(self) -> str:
-        """Fetch the power usage data from ESB with size limits."""
+    async def __fetch_data(self, download_token: str, user_agent: str) -> str:
+        """Fetch the power usage data from ESB with size limits (REQUEST 8)."""
         try:
-            # URL encode MPRN to prevent injection attacks
-            encoded_mprn = quote(self._mprn, safe='')
-            data_url = f"{ESB_DATA_URL}?mprn={encoded_mprn}"
-            _LOGGER.debug("Fetching CSV data for MPRN %s", self._mprn)
+            download_headers = {
+                "User-Agent": user_agent,
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Content-Type": "application/json",
+                "Referer": ESB_CONSUMPTION_URL,
+                "X-Returnurl": ESB_CONSUMPTION_URL,
+                "X-Xsrf-Token": download_token,
+                "Origin": ESB_MYACCOUNT_URL,
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+            }
+            payload = {
+                "mprn": self._mprn,
+                "searchType": "intervalkw"
+            }
+            
+            _LOGGER.debug("Request 8: Downloading CSV data for MPRN %s", self._mprn)
 
-            async with self._session.get(
-                data_url,
+            async with self._session.post(
+                ESB_DOWNLOAD_URL,
+                headers=download_headers,
+                json=payload,
                 timeout=self._timeout,
             ) as response:
                 response.raise_for_status()
@@ -528,8 +673,10 @@ class ESBDataApi:
         for attempt in range(DEFAULT_MAX_RETRIES):
             try:
                 _LOGGER.debug("Fetch attempt %d of %d", attempt + 1, DEFAULT_MAX_RETRIES)
-                await self.__login()
-                csv_data = await self.__fetch_data()
+                auth_result = await self.__login()
+                download_token = auth_result.get("download_token")
+                user_agent = auth_result.get("user_agent")
+                csv_data = await self.__fetch_data(download_token, user_agent)
                 data = await self._hass.async_add_executor_job(
                     self.__csv_to_dict, csv_data
                 )
