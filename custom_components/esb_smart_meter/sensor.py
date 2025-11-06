@@ -8,6 +8,7 @@ from abc import abstractmethod
 from datetime import datetime, timedelta
 from io import StringIO
 from typing import Any
+from urllib.parse import urlencode
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -383,15 +384,19 @@ class ESBDataApi:
                     raise ValueError("Missing required authentication tokens")
 
                 _LOGGER.debug("Got CSRF token and transaction ID")
+                _LOGGER.debug("CSRF token: %s", settings["csrf"][:20] + "..." if len(settings["csrf"]) > 20 else settings["csrf"])
+                _LOGGER.debug("Transaction ID: %s", settings["transId"])
 
             # Add delay between requests
             await asyncio.sleep(randint(10, 20))
 
             # REQUEST 2: POST SelfAsserted - Login with credentials
-            login_url = (
-                f"{ESB_AUTH_BASE_URL}/SelfAsserted?"
-                f"tx={settings['transId']}&p=B2C_1A_signup_signin"
-            )
+            # Construct URL with proper query parameters
+            login_params = {
+                "tx": settings["transId"],
+                "p": "B2C_1A_signup_signin"
+            }
+            login_url = f"{ESB_AUTH_BASE_URL}/SelfAsserted?{urlencode(login_params)}"
             login_headers = {
                 **headers,
                 "x-csrf-token": settings["csrf"],
@@ -417,9 +422,15 @@ class ESBDataApi:
                 headers=login_headers,
                 timeout=self._timeout,
             ) as response:
-                response.raise_for_status()
                 _LOGGER.debug("Request 2 response status: %s", response.status)
                 _LOGGER.debug("Request 2 response URL: %s", response.url)
+                if response.status != 200:
+                    error_content = await response.text()
+                    _LOGGER.error("Request 2 failed with status %s", response.status)
+                    _LOGGER.error("Request 2 error response: %s", error_content[:1000])
+                response.raise_for_status()
+                login_response = await response.text()
+                _LOGGER.debug("Request 2 response preview: %s", login_response[:500])
                 _LOGGER.debug("Login successful")
 
             # REQUEST 3: GET CombinedSigninAndSignup/confirmed
