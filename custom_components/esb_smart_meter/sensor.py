@@ -454,6 +454,19 @@ class ESBDataApi:
                 content = await response.text()
                 _LOGGER.debug("Request 3 response length: %d bytes", len(content))
                 _LOGGER.debug("Request 3 response preview (first 500 chars): %s", content[:500])
+                
+                # Check if CAPTCHA is present
+                if "g-recaptcha-response" in content or "captcha.html" in content or 'error_requiredFieldMissing":"Please confirm you are not a robot' in content:
+                    _LOGGER.error("CAPTCHA detected in ESB response!")
+                    _LOGGER.error("ESB Networks has added CAPTCHA protection to their login flow.")
+                    _LOGGER.error("This prevents automated authentication.")
+                    _LOGGER.error("Response contains: captcha.html or g-recaptcha-response")
+                    raise ValueError(
+                        "ESB Networks requires CAPTCHA verification. "
+                        "Automated login is currently not possible. "
+                        "This may be temporary rate limiting or a permanent security change."
+                    )
+                
                 soup = BeautifulSoup(content, "html.parser")
                 form = soup.find("form", {"id": "auto"})
                 if not form:
