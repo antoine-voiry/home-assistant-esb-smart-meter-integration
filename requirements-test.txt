@@ -1,0 +1,7 @@
+# Test dependencies for ESB Smart Meter Integration
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=6.0.0
+pytest-aiohttp>=1.0.0
+pytest-homeassistant-custom-component>=0.13.0
+homeassistant>=2024.1.0
