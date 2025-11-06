@@ -354,6 +354,8 @@ class ESBDataApi:
         # Select a random user agent and use it consistently throughout the session
         user_agent = self.__get_random_user_agent()
         _LOGGER.debug("Using User-Agent: %s", user_agent)
+        _LOGGER.debug("Session cookie jar type: %s", type(self._session.cookie_jar))
+        _LOGGER.debug("Session cookie jar unsafe: %s", getattr(self._session.cookie_jar, 'unsafe', 'N/A'))
 
         headers = {
             "User-Agent": user_agent
@@ -372,6 +374,7 @@ class ESBDataApi:
                 response.raise_for_status()
                 _LOGGER.debug("Request 1 response status: %s", response.status)
                 _LOGGER.debug("Request 1 final URL: %s", response.url)
+                _LOGGER.debug("Request 1 cookies set: %s", [f"{c.key}={c.value[:20]}..." for c in self._session.cookie_jar])
                 content = await response.text()
                 _LOGGER.debug("Request 1 response length: %d bytes", len(content))
                 settings_match = re.findall(r"(?<=var SETTINGS = )\S*;", content)
@@ -416,6 +419,7 @@ class ESBDataApi:
             }
             _LOGGER.debug("Request 2: Submitting login credentials")
             _LOGGER.debug("Request 2 URL: %s", login_url)
+            _LOGGER.debug("Request 2 cookies available: %s", [f"{c.key}" for c in self._session.cookie_jar])
             async with self._session.post(
                 login_url,
                 data=login_data,
