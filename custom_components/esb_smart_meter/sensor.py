@@ -365,9 +365,22 @@ class ESBDataApi:
             # REQUEST 1: Get CSRF token and settings
             _LOGGER.debug("Request 1: Getting CSRF token from ESB")
             _LOGGER.debug("Request 1 URL: %s", ESB_LOGIN_URL)
+            
+            # Add Referer header for the initial request
+            initial_headers = {
+                **headers,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            }
+            
             async with self._session.get(
                 ESB_LOGIN_URL,
-                headers=headers,
+                headers=initial_headers,
                 allow_redirects=True,
                 timeout=self._timeout,
             ) as response:
