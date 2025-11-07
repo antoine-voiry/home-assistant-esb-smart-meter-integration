@@ -59,7 +59,13 @@ async def async_setup_entry(
     password = entry.data[CONF_PASSWORD]
     mprn = entry.data[CONF_MPRN]
 
-    session = async_get_clientsession(hass)
+    # Create our own session with proper cookie jar instead of using HA's shared session
+    # This is needed because ESB's OAuth flow requires proper cookie handling
+    session = aiohttp.ClientSession(
+        cookie_jar=aiohttp.CookieJar(unsafe=True),
+        connector=aiohttp.TCPConnector(limit=10, limit_per_host=2),
+    )
+    
     esb_api = ESBCachingApi(
         ESBDataApi(
             hass=hass,
