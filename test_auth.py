@@ -29,6 +29,27 @@ logging.basicConfig(
 _LOGGER = logging.getLogger(__name__)
 
 
+def create_esb_session() -> aiohttp.ClientSession:
+    """Creates a new, non-shared, lenient aiohttp ClientSession.
+    
+    The recommended approach for a custom component making external requests
+    where cookie isolation/leniency is required.
+    """
+    # 1. Create a custom CookieJar.
+    # The 'quote_cookie=False' flag prevents aiohttp from strictly enforcing 
+    # cookie value quoting, which is usually the source of 400 errors 
+    # with services like MSFT/Google/ESB.
+    cookie_jar = aiohttp.CookieJar(
+        quote_cookie=False,
+        unsafe=False  # Keep this False unless you specifically need IP address cookie support
+    )
+    
+    # 2. Create a NEW session with your custom jar.
+    session = aiohttp.ClientSession(cookie_jar=cookie_jar)
+    
+    return session
+
+
 class MockHomeAssistant:
     """Mock Home Assistant for testing."""
     
@@ -52,7 +73,11 @@ async def test_authentication(username: str, password: str, mprn: str):
     
     mock_hass = MockHomeAssistant()
     
-    async with aiohttp.ClientSession() as session:
+    # Create custom session with lenient cookie handling
+    # This matches what the integration does in production with create_esb_session()
+    session = create_esb_session()
+    
+    try:
         # Create the ESBDataApi instance using the actual production code
         esb_api = ESBDataApi(
             hass=mock_hass,
@@ -94,6 +119,9 @@ async def test_authentication(username: str, password: str, mprn: str):
             _LOGGER.error("=" * 80)
             _LOGGER.error("", exc_info=True)
             raise
+    finally:
+        # Ensure session is properly closed
+        await session.close()
 
 
 async def main():

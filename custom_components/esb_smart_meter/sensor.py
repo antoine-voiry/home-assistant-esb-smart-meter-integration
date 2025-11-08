@@ -17,7 +17,7 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -49,6 +49,29 @@ from .user_agents import USER_AGENTS
 _LOGGER = logging.getLogger(__name__)
 
 
+async def create_esb_session(hass: HomeAssistant) -> aiohttp.ClientSession:
+    """Creates a new, non-shared, lenient aiohttp ClientSession.
+    
+    The recommended approach for a custom component making external requests
+    where cookie isolation/leniency is required.
+    """
+    # 1. Create a custom CookieJar.
+    # The 'quote_cookie=False' flag prevents aiohttp from strictly enforcing 
+    # cookie value quoting, which is usually the source of 400 errors 
+    # with services like MSFT/Google.
+    cookie_jar = aiohttp.CookieJar(
+        quote_cookie=False,
+        unsafe=False  # Keep this False unless you specifically need IP address cookie support
+    )
+    
+    # 2. Use the HA helper to create a NEW session with your custom jar.
+    # async_create_clientsession ensures a clean session, preventing 
+    # contamination from the main HA session.
+    session = async_create_clientsession(hass, cookie_jar=cookie_jar)
+    
+    return session
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -59,13 +82,7 @@ async def async_setup_entry(
     password = entry.data[CONF_PASSWORD]
     mprn = entry.data[CONF_MPRN]
 
-    # Create our own session with proper cookie jar instead of using HA's shared session
-    # This is needed because ESB's OAuth flow requires proper cookie handling
-    session = aiohttp.ClientSession(
-        cookie_jar=aiohttp.CookieJar(unsafe=True),
-        connector=aiohttp.TCPConnector(limit=10, limit_per_host=2),
-    )
-    
+    session = await create_esb_session(hass)
     esb_api = ESBCachingApi(
         ESBDataApi(
             hass=hass,
@@ -427,6 +444,7 @@ class ESBDataApi:
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": "https://login.esbnetworks.ie",
+                "Referer": str(response.url),  # Add Referer from Request 1
                 "Sec-Fetch-Dest": "empty",
                 "Sec-Fetch-Mode": "cors",
                 "Sec-Fetch-Site": "same-origin",
@@ -439,6 +457,8 @@ class ESBDataApi:
             _LOGGER.debug("Request 2: Submitting login credentials")
             _LOGGER.debug("Request 2 URL: %s", login_url)
             _LOGGER.debug("Request 2 cookies available: %s", [f"{c.key}" for c in self._session.cookie_jar])
+            _LOGGER.debug("Request 2 data: %s", login_data)
+            _LOGGER.debug("Request 2 headers: %s", {k: v for k, v in login_headers.items() if k.lower() not in ('user-agent',)})
             async with self._session.post(
                 login_url,
                 data=login_data,
@@ -728,8 +748,33 @@ class ESBDataApi:
                 # Don't retry on data validation errors (invalid CSV, size limits, etc)
                 _LOGGER.error("Data validation error: %s", err)
                 raise
+            except aiohttp.ClientResponseError as err:
+                # Don't retry on 4xx client errors (bad request, auth failure, etc)
+                if 400 <= err.status < 500:
+                    _LOGGER.error(
+                        "Client error %d: %s. This indicates a code issue, not retrying.",
+                        err.status,
+                        err.message,
+                    )
+                    raise
+                # Retry on 5xx server errors
+                last_error = err
+                if attempt < DEFAULT_MAX_RETRIES - 1:
+                    _LOGGER.warning(
+                        "Fetch attempt %d failed with server error %d. Retrying in %d seconds...",
+                        attempt + 1,
+                        err.status,
+                        DEFAULT_RETRY_WAIT,
+                    )
+                    await asyncio.sleep(DEFAULT_RETRY_WAIT)
+                else:
+                    _LOGGER.error(
+                        "All %d fetch attempts failed. Last error: %s",
+                        DEFAULT_MAX_RETRIES,
+                        err,
+                    )
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-                # Retry on network errors
+                # Retry on other network errors (connection issues, timeouts)
                 last_error = err
                 if attempt < DEFAULT_MAX_RETRIES - 1:
                     _LOGGER.warning(

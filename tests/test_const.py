@@ -34,9 +34,9 @@ def test_configuration_keys():
 
 def test_default_values():
     """Test default value constants."""
-    assert DEFAULT_SCAN_INTERVAL == timedelta(hours=12)
+    assert DEFAULT_SCAN_INTERVAL == timedelta(hours=24)
     assert DEFAULT_TIMEOUT == 30
-    assert DEFAULT_MAX_RETRIES == 3
+    assert DEFAULT_MAX_RETRIES == 5
     assert MAX_CSV_SIZE_MB == 10
     assert MAX_DATA_AGE_DAYS == 90
 
