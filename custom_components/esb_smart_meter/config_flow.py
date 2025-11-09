@@ -1,14 +1,14 @@
 """Config flow for ESB Smart Meter integration."""
+
 import logging
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN, MPRN_LENGTH
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -17,8 +17,7 @@ _LOGGER = logging.getLogger(__name__)
 def configured_instances(hass: HomeAssistant) -> set[str]:
     """Return a set of configured instances."""
     return {
-        entry.data[CONF_MPRN]
-        for entry in hass.config_entries.async_entries(DOMAIN)
+        entry.data[CONF_MPRN] for entry in hass.config_entries.async_entries(DOMAIN)
     }
 
 
@@ -36,7 +35,7 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Validate MPRN format (should be 11 digits)
             mprn = user_input[CONF_MPRN].strip()
-            if not mprn.isdigit() or len(mprn) != 11:
+            if not mprn.isdigit() or len(mprn) != MPRN_LENGTH:
                 errors[CONF_MPRN] = "invalid_mprn"
             elif mprn in configured_instances(self.hass):
                 errors["base"] = "mprn_exists"
@@ -51,20 +50,20 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_USERNAME: user_input[CONF_USERNAME],
                         CONF_PASSWORD: user_input[CONF_PASSWORD],
                         CONF_MPRN: mprn,
-                    }
+                    },
                 )
 
-        data_schema = vol.Schema({
-            vol.Required(CONF_USERNAME): str,
-            vol.Required(CONF_PASSWORD): str,
-            vol.Required(CONF_MPRN): str,
-        })
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_USERNAME): str,
+                vol.Required(CONF_PASSWORD): str,
+                vol.Required(CONF_MPRN): str,
+            }
+        )
 
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
             errors=errors,
-            description_placeholders={
-                "mprn_format": "11-digit MPRN number"
-            }
+            description_placeholders={"mprn_format": "11-digit MPRN number"},
         )

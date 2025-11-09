@@ -36,7 +36,7 @@ def test_default_values():
     """Test default value constants."""
     assert DEFAULT_SCAN_INTERVAL == timedelta(hours=24)
     assert DEFAULT_TIMEOUT == 30
-    assert DEFAULT_MAX_RETRIES == 5
+    assert DEFAULT_MAX_RETRIES == 3  # Changed for stealth (max 3 attempts per day)
     assert MAX_CSV_SIZE_MB == 10
     assert MAX_DATA_AGE_DAYS == 90
 
