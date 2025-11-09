@@ -189,27 +189,25 @@ class TestESBDataApi:
 
     @pytest.mark.asyncio
     async def test_fetch_with_retry(self, esb_api, sample_csv_data, sample_esb_login_html, sample_esb_confirm_html):
-        """Test fetch with retry logic."""
-        # First attempt fails, second succeeds
-        login_responses = [
-            aiohttp.ClientError("Network error"),
-            AsyncMock(
-                status=200,
-                text=AsyncMock(return_value=sample_esb_login_html),
-                raise_for_status=MagicMock(),
-                headers={}
-            ),
-        ]
+        """Test fetch with circuit breaker - first attempt fails, second succeeds after circuit allows."""
+        # First attempt should fail and record in circuit breaker
+        with patch.object(
+            esb_api,
+            '_ESBDataApi__login',
+            side_effect=aiohttp.ClientError("Network error")
+        ):
+            with pytest.raises(aiohttp.ClientError):
+                await esb_api.fetch()
 
-        call_count = [0]
+        # Circuit breaker should have recorded the failure
+        assert esb_api._circuit_breaker._failure_count == 1
 
-        async def mock_login(*args, **kwargs):
-            if call_count[0] == 0:
-                call_count[0] += 1
-                raise login_responses[0]
-            return {"test": "cookie"}
-
-        with patch.object(esb_api, '_ESBDataApi__login', side_effect=mock_login):
+        # Second attempt succeeds (circuit breaker allows since not enough failures yet)
+        with patch.object(
+            esb_api,
+            '_ESBDataApi__login',
+            return_value={"download_token": "test-token", "user_agent": "test-ua"}
+        ):
             with patch.object(
                 esb_api,
                 '_ESBDataApi__fetch_data',
@@ -222,6 +220,8 @@ class TestESBDataApi:
                 ):
                     result = await esb_api.fetch()
                     assert result is not None
+                    # Circuit breaker should be reset after success
+                    assert esb_api._circuit_breaker._failure_count == 0
 
 
 class TestESBCachingApi:

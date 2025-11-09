@@ -1,18 +1,20 @@
 """Support for ESB Smart Meter sensors."""
+
 import asyncio
 import csv
 import json
 import logging
+import random
 import re
 from abc import abstractmethod
 from datetime import datetime, timedelta
 from io import StringIO
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlencode
 
 import aiohttp
+import homeassistant.util.dt as dt_util
 from bs4 import BeautifulSoup
-
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
@@ -21,54 +23,88 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (
-    CONF_MPRN,
-    CONF_PASSWORD,
-    CONF_USERNAME,
-    CSV_COLUMN_DATE,
-    CSV_COLUMN_VALUE,
-    CSV_DATE_FORMAT,
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_RETRY_WAIT,
-    DEFAULT_SCAN_INTERVAL,
-    DEFAULT_TIMEOUT,
-    DOMAIN,
-    ESB_AUTH_BASE_URL,
-    ESB_CONSUMPTION_URL,
-    ESB_DOWNLOAD_URL,
-    ESB_LOGIN_URL,
-    ESB_MYACCOUNT_URL,
-    ESB_TOKEN_URL,
-    MANUFACTURER,
-    MAX_CSV_SIZE_MB,
-    MAX_DATA_AGE_DAYS,
-    MODEL,
-)
+from .const import (CIRCUIT_BREAKER_FAILURES, CIRCUIT_BREAKER_MAX_TIMEOUT,
+                    CIRCUIT_BREAKER_TIMEOUT, CONF_MPRN, CONF_PASSWORD,
+                    CONF_USERNAME, CSV_COLUMN_DATE, CSV_COLUMN_VALUE,
+                    CSV_DATE_FORMAT, DEFAULT_SCAN_INTERVAL, DEFAULT_TIMEOUT,
+                    DOMAIN, ESB_AUTH_BASE_URL, ESB_CONSUMPTION_URL,
+                    ESB_DOWNLOAD_URL, ESB_LOGIN_URL, ESB_MYACCOUNT_URL,
+                    ESB_TOKEN_URL, HA_UPTIME_THRESHOLD, LONG_PAUSE_MAX,
+                    LONG_PAUSE_MIN, LONG_PAUSE_PROBABILITY, MANUFACTURER,
+                    MAX_AUTH_ATTEMPTS_PER_DAY, MAX_CSV_SIZE_MB,
+                    MAX_DATA_AGE_DAYS, MAX_REQUEST_DELAY, MIN_REQUEST_DELAY,
+                    MODEL, RATE_LIMIT_BACKOFF_MINUTES, REQUEST_DELAY_MEAN,
+                    REQUEST_DELAY_STDDEV, STARTUP_DELAY_MAX, STARTUP_DELAY_MIN)
 from .user_agents import USER_AGENTS
 
 _LOGGER = logging.getLogger(__name__)
 
 
+def get_human_like_delay() -> float:
+    """Generate a human-like delay using normal distribution with occasional long pauses."""
+    # Use normal distribution for more realistic timing
+    delay = random.gauss(REQUEST_DELAY_MEAN, REQUEST_DELAY_STDDEV)
+
+    # Clamp to reasonable bounds
+    delay = max(MIN_REQUEST_DELAY, min(MAX_REQUEST_DELAY, delay))
+
+    # Add occasional longer pauses to mimic human reading/thinking
+    if random.random() < LONG_PAUSE_PROBABILITY:
+        delay += random.uniform(LONG_PAUSE_MIN, LONG_PAUSE_MAX)
+        _LOGGER.debug("Adding long pause: %.2f seconds total", delay)
+
+    return delay
+
+
+async def get_startup_delay(hass: HomeAssistant) -> float:
+    """Calculate startup delay based on HA uptime to avoid immediate requests after boot."""
+    # Check how long Home Assistant has been running
+    try:
+        uptime_seconds = (
+            dt_util.utcnow()
+            - hass.data.get("homeassistant", {}).get("start_time", dt_util.utcnow())
+        ).total_seconds()
+    except (AttributeError, TypeError, KeyError):
+        # If we can't determine uptime, assume HA just started
+        uptime_seconds = 0
+
+    # If HA has been running for less than 10 minutes, add a startup delay
+    if uptime_seconds < HA_UPTIME_THRESHOLD:
+        delay = random.uniform(STARTUP_DELAY_MIN, STARTUP_DELAY_MAX)
+        _LOGGER.info(
+            "Home Assistant uptime is %.1f seconds (< %d), adding startup delay of %.1f seconds",
+            uptime_seconds,
+            HA_UPTIME_THRESHOLD,
+            delay,
+        )
+        return delay
+
+    _LOGGER.debug(
+        "Home Assistant uptime is %.1f seconds, skipping startup delay", uptime_seconds
+    )
+    return 0
+
+
 async def create_esb_session(hass: HomeAssistant) -> aiohttp.ClientSession:
     """Creates a new, non-shared, lenient aiohttp ClientSession.
-    
+
     The recommended approach for a custom component making external requests
     where cookie isolation/leniency is required.
     """
     # 1. Create a custom CookieJar.
-    # The 'quote_cookie=False' flag prevents aiohttp from strictly enforcing 
-    # cookie value quoting, which is usually the source of 400 errors 
+    # The 'quote_cookie=False' flag prevents aiohttp from strictly enforcing
+    # cookie value quoting, which is usually the source of 400 errors
     # with services like MSFT/Google.
     cookie_jar = aiohttp.CookieJar(
         quote_cookie=False,
-        unsafe=False  # Keep this False unless you specifically need IP address cookie support
+        unsafe=False,  # Keep this False unless you specifically need IP address cookie support
     )
-    
+
     # 2. Use the HA helper to create a NEW session with your custom jar.
-    # async_create_clientsession ensures a clean session, preventing 
+    # async_create_clientsession ensures a clean session, preventing
     # contamination from the main HA session.
     session = async_create_clientsession(hass, cookie_jar=cookie_jar)
-    
+
     return session
 
 
@@ -78,11 +114,22 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the ESB Smart Meter sensor based on a config entry."""
+    # Implement startup delay to avoid immediate requests after HA boot
+    startup_delay = await get_startup_delay(hass)
+    if startup_delay > 0:
+        _LOGGER.info("Delaying ESB Smart Meter startup by %.1f seconds", startup_delay)
+        await asyncio.sleep(startup_delay)
+
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     mprn = entry.data[CONF_MPRN]
 
     session = await create_esb_session(hass)
+
+    # Store session reference for cleanup
+    if entry.entry_id in hass.data[DOMAIN]:
+        hass.data[DOMAIN][entry.entry_id]["session"] = session
+
     esb_api = ESBCachingApi(
         ESBDataApi(
             hass=hass,
@@ -95,11 +142,21 @@ async def async_setup_entry(
 
     sensors = [
         TodaySensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Today"),
-        Last24HoursSensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 24 Hours"),
-        ThisWeekSensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Week"),
-        Last7DaysSensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 7 Days"),
-        ThisMonthSensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Month"),
-        Last30DaysSensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 30 Days"),
+        Last24HoursSensor(
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 24 Hours"
+        ),
+        ThisWeekSensor(
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Week"
+        ),
+        Last7DaysSensor(
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 7 Days"
+        ),
+        ThisMonthSensor(
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Month"
+        ),
+        Last30DaysSensor(
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 30 Days"
+        ),
     ]
 
     async_add_entities(sensors, True)
@@ -141,8 +198,16 @@ class BaseSensor(SensorEntity):
                 self._attr_available = True
             else:
                 self._attr_available = False
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.error("Network error updating %s: %s", self._attr_name, err)
+            self._attr_available = False
+        except (ValueError, KeyError, json.JSONDecodeError) as err:
+            _LOGGER.error("Data parsing error updating %s: %s", self._attr_name, err)
+            self._attr_available = False
         except Exception as err:
-            _LOGGER.error("Failed to update %s: %s", self._attr_name, err)
+            _LOGGER.error(
+                "Unexpected error updating %s: %s", self._attr_name, err, exc_info=True
+            )
             self._attr_available = False
 
 
@@ -241,7 +306,8 @@ class ESBData:
         self._data = self._filter_and_parse_data(data, cutoff_date)
         _LOGGER.debug(
             "Loaded %d rows of data (filtered data older than %d days)",
-            len(self._data), MAX_DATA_AGE_DAYS
+            len(self._data),
+            MAX_DATA_AGE_DAYS,
         )
 
     @staticmethod
@@ -256,9 +322,7 @@ class ESBData:
         parsed_data = []
         for row in data:
             try:
-                timestamp = datetime.strptime(
-                    row[CSV_COLUMN_DATE], CSV_DATE_FORMAT
-                )
+                timestamp = datetime.strptime(row[CSV_COLUMN_DATE], CSV_DATE_FORMAT)
                 if timestamp >= cutoff_date:
                     value = float(row[CSV_COLUMN_VALUE])
                     parsed_data.append((timestamp, value))
@@ -269,9 +333,7 @@ class ESBData:
 
     def __sum_data_since(self, *, since: datetime) -> float:
         """Sum energy usage since a specific datetime (optimized)."""
-        return sum(
-            value for timestamp, value in self._data if timestamp >= since
-        )
+        return sum(value for timestamp, value in self._data if timestamp >= since)
 
     @property
     def today(self) -> float:
@@ -344,6 +406,94 @@ class ESBCachingApi:
         return self._cached_data
 
 
+class CircuitBreaker:
+    """Circuit breaker to prevent hammering the API after failures."""
+
+    def __init__(self) -> None:
+        """Initialize circuit breaker."""
+        self._failure_count = 0
+        self._last_failure_time: Optional[datetime] = None
+        self._daily_attempts = 0
+        self._daily_attempts_reset_time: Optional[datetime] = None
+        self._is_open = False
+
+    def can_attempt(self) -> bool:
+        """Check if we can attempt a request."""
+        now = datetime.now()
+
+        # Reset daily counter if it's a new day
+        if (
+            self._daily_attempts_reset_time is None
+            or now.date() > self._daily_attempts_reset_time.date()
+        ):
+            self._daily_attempts = 0
+            self._daily_attempts_reset_time = now
+
+        # Check daily limit
+        if self._daily_attempts >= MAX_AUTH_ATTEMPTS_PER_DAY:
+            _LOGGER.warning(
+                "Circuit breaker: Daily authentication limit reached (%d/%d)",
+                self._daily_attempts,
+                MAX_AUTH_ATTEMPTS_PER_DAY,
+            )
+            return False
+
+        # Check if circuit is open
+        if self._is_open and self._last_failure_time:
+            # Calculate backoff time with exponential growth
+            backoff_time = min(
+                CIRCUIT_BREAKER_TIMEOUT * (2 ** (self._failure_count - 1)),
+                CIRCUIT_BREAKER_MAX_TIMEOUT,
+            )
+            elapsed = (now - self._last_failure_time).total_seconds()
+
+            if elapsed < backoff_time:
+                remaining = backoff_time - elapsed
+                _LOGGER.debug(
+                    "Circuit breaker open: waiting %.0f more seconds before retry (failures: %d)",
+                    remaining,
+                    self._failure_count,
+                )
+                return False
+
+            # Enough time has passed, try half-open state
+            _LOGGER.info(
+                "Circuit breaker: attempting recovery after %d failures",
+                self._failure_count,
+            )
+            self._is_open = False
+
+        return True
+
+    def record_success(self) -> None:
+        """Record a successful attempt."""
+        self._failure_count = 0
+        self._is_open = False
+        self._daily_attempts += 1
+        _LOGGER.debug(
+            "Circuit breaker: Success recorded (daily attempts: %d)",
+            self._daily_attempts,
+        )
+
+    def record_failure(self) -> None:
+        """Record a failed attempt."""
+        self._failure_count += 1
+        self._last_failure_time = datetime.now()
+        self._daily_attempts += 1
+
+        if self._failure_count >= CIRCUIT_BREAKER_FAILURES:
+            self._is_open = True
+            backoff_time = min(
+                CIRCUIT_BREAKER_TIMEOUT * (2 ** (self._failure_count - 1)),
+                CIRCUIT_BREAKER_MAX_TIMEOUT,
+            )
+            _LOGGER.warning(
+                "Circuit breaker opened after %d failures. Will retry in %.0f seconds",
+                self._failure_count,
+                backoff_time,
+            )
+
+
 class ESBDataApi:
     """Class for handling the data retrieval from ESB using async aiohttp."""
 
@@ -363,6 +513,7 @@ class ESBDataApi:
         self._password = password
         self._mprn = mprn
         self._timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
+        self._circuit_breaker = CircuitBreaker()
 
     def __get_random_user_agent(self) -> str:
         """Get a random user agent from popular browsers."""
@@ -372,23 +523,22 @@ class ESBDataApi:
 
     async def __login(self) -> dict[str, str]:
         """Login to ESB and return cookies (following the complete 8-step flow)."""
-        from random import randint
-
         # Select a random user agent and use it consistently throughout the session
         user_agent = self.__get_random_user_agent()
         _LOGGER.debug("Using User-Agent: %s", user_agent)
         _LOGGER.debug("Session cookie jar type: %s", type(self._session.cookie_jar))
-        _LOGGER.debug("Session cookie jar unsafe: %s", getattr(self._session.cookie_jar, 'unsafe', 'N/A'))
+        _LOGGER.debug(
+            "Session cookie jar unsafe: %s",
+            getattr(self._session.cookie_jar, "unsafe", "N/A"),
+        )
 
-        headers = {
-            "User-Agent": user_agent
-        }
+        headers = {"User-Agent": user_agent}
 
         try:
             # REQUEST 1: Get CSRF token and settings
             _LOGGER.debug("Request 1: Getting CSRF token from ESB")
             _LOGGER.debug("Request 1 URL: %s", ESB_LOGIN_URL)
-            
+
             # Add Referer header for the initial request
             initial_headers = {
                 **headers,
@@ -400,7 +550,7 @@ class ESBDataApi:
                 "Sec-Fetch-User": "?1",
                 "Upgrade-Insecure-Requests": "1",
             }
-            
+
             async with self._session.get(
                 ESB_LOGIN_URL,
                 headers=initial_headers,
@@ -410,7 +560,10 @@ class ESBDataApi:
                 response.raise_for_status()
                 _LOGGER.debug("Request 1 response status: %s", response.status)
                 _LOGGER.debug("Request 1 final URL: %s", response.url)
-                _LOGGER.debug("Request 1 cookies set: %s", [f"{c.key}={c.value[:20]}..." for c in self._session.cookie_jar])
+                _LOGGER.debug(
+                    "Request 1 cookies set: %s",
+                    [f"{c.key}={c.value[:20]}..." for c in self._session.cookie_jar],
+                )
                 content = await response.text()
                 _LOGGER.debug("Request 1 response length: %d bytes", len(content))
                 settings_match = re.findall(r"(?<=var SETTINGS = )\S*;", content)
@@ -423,18 +576,17 @@ class ESBDataApi:
                     raise ValueError("Missing required authentication tokens")
 
                 _LOGGER.debug("Got CSRF token and transaction ID")
-                _LOGGER.debug("CSRF token: %s", settings["csrf"][:20] + "..." if len(settings["csrf"]) > 20 else settings["csrf"])
-                _LOGGER.debug("Transaction ID: %s", settings["transId"])
+                # Security: Do not log sensitive tokens
+                _LOGGER.debug("CSRF token length: %d", len(settings.get("csrf", "")))
+                _LOGGER.debug("Transaction ID: [REDACTED]")
 
-            # Add delay between requests
-            await asyncio.sleep(randint(10, 20))
+            # Add human-like delay between requests
+            delay = get_human_like_delay()
+            await asyncio.sleep(delay)
 
             # REQUEST 2: POST SelfAsserted - Login with credentials
             # Construct URL with proper query parameters
-            login_params = {
-                "tx": settings["transId"],
-                "p": "B2C_1A_signup_signin"
-            }
+            login_params = {"tx": settings["transId"], "p": "B2C_1A_signup_signin"}
             login_url = f"{ESB_AUTH_BASE_URL}/SelfAsserted?{urlencode(login_params)}"
             login_headers = {
                 **headers,
@@ -456,9 +608,22 @@ class ESBDataApi:
             }
             _LOGGER.debug("Request 2: Submitting login credentials")
             _LOGGER.debug("Request 2 URL: %s", login_url)
-            _LOGGER.debug("Request 2 cookies available: %s", [f"{c.key}" for c in self._session.cookie_jar])
-            _LOGGER.debug("Request 2 data: %s", login_data)
-            _LOGGER.debug("Request 2 headers: %s", {k: v for k, v in login_headers.items() if k.lower() not in ('user-agent',)})
+            _LOGGER.debug(
+                "Request 2 cookies available: %s",
+                [f"{c.key}" for c in self._session.cookie_jar],
+            )
+            # Security: Do not log credentials
+            _LOGGER.debug(
+                "Request 2 data: signInName=[REDACTED], password=[REDACTED], request_type=RESPONSE"
+            )
+            _LOGGER.debug(
+                "Request 2 headers: %s",
+                {
+                    k: v
+                    for k, v in login_headers.items()
+                    if k.lower() not in ("user-agent", "x-csrf-token")
+                },
+            )
             async with self._session.post(
                 login_url,
                 data=login_data,
@@ -483,9 +648,7 @@ class ESBDataApi:
                 "tx": settings["transId"],
                 "p": "B2C_1A_signup_signin",
             }
-            confirm_url = (
-                f"{ESB_AUTH_BASE_URL}/api/CombinedSigninAndSignup/confirmed"
-            )
+            confirm_url = f"{ESB_AUTH_BASE_URL}/api/CombinedSigninAndSignup/confirmed"
             confirm_headers = {
                 **headers,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -507,28 +670,46 @@ class ESBDataApi:
                 _LOGGER.debug("Request 3 response URL: %s", response.url)
                 content = await response.text()
                 _LOGGER.debug("Request 3 response length: %d bytes", len(content))
-                _LOGGER.debug("Request 3 response preview (first 500 chars): %s", content[:500])
-                
+                _LOGGER.debug(
+                    "Request 3 response preview (first 500 chars): %s", content[:500]
+                )
+
                 # Check if CAPTCHA is present
-                if "g-recaptcha-response" in content or "captcha.html" in content or 'error_requiredFieldMissing":"Please confirm you are not a robot' in content:
+                if (
+                    "g-recaptcha-response" in content
+                    or "captcha.html" in content
+                    or 'error_requiredFieldMissing":"Please confirm you are not a robot'
+                    in content
+                ):
                     _LOGGER.error("CAPTCHA detected in ESB response!")
-                    _LOGGER.error("ESB Networks has added CAPTCHA protection to their login flow.")
+                    _LOGGER.error(
+                        "ESB Networks has added CAPTCHA protection to their login flow."
+                    )
                     _LOGGER.error("This prevents automated authentication.")
-                    _LOGGER.error("Response contains: captcha.html or g-recaptcha-response")
+                    _LOGGER.error(
+                        "Response contains: captcha.html or g-recaptcha-response"
+                    )
                     raise ValueError(
                         "ESB Networks requires CAPTCHA verification. "
                         "Automated login is currently not possible. "
                         "This may be temporary rate limiting or a permanent security change."
                     )
-                
+
                 soup = BeautifulSoup(content, "html.parser")
                 form = soup.find("form", {"id": "auto"})
                 if not form:
-                    _LOGGER.error("Could not find form with id='auto'. Looking for any forms...")
+                    _LOGGER.error(
+                        "Could not find form with id='auto'. Looking for any forms..."
+                    )
                     all_forms = soup.find_all("form")
                     _LOGGER.error("Found %d forms in response", len(all_forms))
                     for idx, f in enumerate(all_forms):
-                        _LOGGER.error("Form %d: id=%s, action=%s", idx, f.get("id"), f.get("action"))
+                        _LOGGER.error(
+                            "Form %d: id=%s, action=%s",
+                            idx,
+                            f.get("id"),
+                            f.get("action"),
+                        )
                     _LOGGER.debug("Full HTML response:\n%s", content)
                     raise ValueError("Could not find auto-submit form in ESB response")
 
@@ -550,8 +731,9 @@ class ESBDataApi:
 
                 _LOGGER.debug("Extracted form data")
 
-            # Add delay
-            await asyncio.sleep(randint(2, 5))
+            # Add human-like delay
+            delay = get_human_like_delay()
+            await asyncio.sleep(delay)
 
             # REQUEST 4: POST signin-oidc
             signin_headers = {
@@ -598,8 +780,9 @@ class ESBDataApi:
                 response.raise_for_status()
                 _LOGGER.debug("My account page loaded")
 
-            # Add delay
-            await asyncio.sleep(randint(3, 8))
+            # Add human-like delay
+            delay = get_human_like_delay()
+            await asyncio.sleep(delay)
 
             # REQUEST 6: GET Api/HistoricConsumption
             consumption_headers = {
@@ -620,8 +803,9 @@ class ESBDataApi:
                 response.raise_for_status()
                 _LOGGER.debug("Historic consumption page loaded")
 
-            # Add delay
-            await asyncio.sleep(randint(2, 5))
+            # Add human-like delay
+            delay = get_human_like_delay()
+            await asyncio.sleep(delay)
 
             # REQUEST 7: GET file download token
             token_headers = {
@@ -646,7 +830,9 @@ class ESBDataApi:
                     raise ValueError("Failed to get download token")
                 _LOGGER.debug("Got download token")
 
-            _LOGGER.info("Authentication completed successfully for user: %s", self._username)
+            _LOGGER.info(
+                "Authentication completed successfully for user: %s", self._username
+            )
             return {"download_token": download_token, "user_agent": user_agent}
 
         except aiohttp.ClientError as err:
@@ -675,10 +861,7 @@ class ESBDataApi:
                 "Sec-Fetch-Mode": "cors",
                 "Sec-Fetch-Site": "same-origin",
             }
-            payload = {
-                "mprn": self._mprn,
-                "searchType": "intervalkw"
-            }
+            payload = {"mprn": self._mprn, "searchType": "intervalkw"}
 
             _LOGGER.debug("Request 8: Downloading CSV data for MPRN %s", self._mprn)
 
@@ -691,7 +874,7 @@ class ESBDataApi:
                 response.raise_for_status()
 
                 # Check content size to prevent memory exhaustion
-                content_length = response.headers.get('Content-Length')
+                content_length = response.headers.get("Content-Length")
                 if content_length:
                     size_mb = int(content_length) / (1024 * 1024)
                     if size_mb > MAX_CSV_SIZE_MB:
@@ -703,16 +886,14 @@ class ESBDataApi:
                 csv_data = await response.text()
 
                 # Double-check actual size after download
-                actual_size_mb = len(csv_data.encode('utf-8')) / (1024 * 1024)
+                actual_size_mb = len(csv_data.encode("utf-8")) / (1024 * 1024)
                 if actual_size_mb > MAX_CSV_SIZE_MB:
                     raise ValueError(
                         f"CSV data too large: {actual_size_mb:.2f}MB "
                         f"exceeds {MAX_CSV_SIZE_MB}MB limit"
                     )
 
-                _LOGGER.debug(
-                    "CSV data fetched successfully (%.2f MB)", actual_size_mb
-                )
+                _LOGGER.debug("CSV data fetched successfully (%.2f MB)", actual_size_mb)
                 return csv_data
 
         except aiohttp.ClientError as err:
@@ -731,70 +912,75 @@ class ESBDataApi:
             raise
 
     async def fetch(self) -> ESBData:
-        """Fetch data with retry logic and proper error handling."""
-        last_error = None
-        for attempt in range(DEFAULT_MAX_RETRIES):
-            try:
-                _LOGGER.debug("Fetch attempt %d of %d", attempt + 1, DEFAULT_MAX_RETRIES)
-                auth_result = await self.__login()
-                download_token = auth_result.get("download_token")
-                user_agent = auth_result.get("user_agent")
-                csv_data = await self.__fetch_data(download_token, user_agent)
-                data = await self._hass.async_add_executor_job(
-                    self.__csv_to_dict, csv_data
+        """Fetch data with circuit breaker, retry logic, and conditional download."""
+        # Check circuit breaker before attempting
+        if not self._circuit_breaker.can_attempt():
+            raise RuntimeError("Circuit breaker is open. Too many recent failures.")
+
+        try:
+            # PHASE 1: Authentication only
+            _LOGGER.debug("Attempting authentication to ESB")
+            auth_result = await self.__login()
+
+            # If we get here, authentication succeeded
+            _LOGGER.info("Authentication successful")
+
+            # PHASE 2: Conditional data download (only if auth succeeded)
+            download_token = auth_result.get("download_token")
+            user_agent = auth_result.get("user_agent")
+
+            if not download_token:
+                raise ValueError(
+                    "Authentication succeeded but no download token received"
                 )
-                return ESBData(data=data)
-            except ValueError as err:
-                # Don't retry on data validation errors (invalid CSV, size limits, etc)
-                _LOGGER.error("Data validation error: %s", err)
-                raise
-            except aiohttp.ClientResponseError as err:
-                # Don't retry on 4xx client errors (bad request, auth failure, etc)
-                if 400 <= err.status < 500:
+
+            _LOGGER.debug(
+                "Proceeding with data download after successful authentication"
+            )
+            csv_data = await self.__fetch_data(download_token, user_agent)
+            data = await self._hass.async_add_executor_job(self.__csv_to_dict, csv_data)
+
+            # Success! Record in circuit breaker
+            self._circuit_breaker.record_success()
+
+            return ESBData(data=data)
+
+        except ValueError as err:
+            # Don't retry on data validation errors (invalid CSV, size limits, etc)
+            _LOGGER.error("Data validation error: %s", err)
+            self._circuit_breaker.record_failure()
+            raise
+
+        except aiohttp.ClientResponseError as err:
+            # Handle HTTP errors
+            self._circuit_breaker.record_failure()
+
+            if 400 <= err.status < 500:
+                if err.status == 429:
                     _LOGGER.error(
-                        "Client error %d: %s. This indicates a code issue, not retrying.",
+                        "Rate limited by ESB (429). Waiting %d minutes before next attempt.",
+                        RATE_LIMIT_BACKOFF_MINUTES,
+                    )
+                else:
+                    _LOGGER.error(
+                        "Client error %d: %s. Authentication may have failed.",
                         err.status,
                         err.message,
                     )
-                    raise
-                # Retry on 5xx server errors
-                last_error = err
-                if attempt < DEFAULT_MAX_RETRIES - 1:
-                    _LOGGER.warning(
-                        "Fetch attempt %d failed with server error %d. Retrying in %d seconds...",
-                        attempt + 1,
-                        err.status,
-                        DEFAULT_RETRY_WAIT,
-                    )
-                    await asyncio.sleep(DEFAULT_RETRY_WAIT)
-                else:
-                    _LOGGER.error(
-                        "All %d fetch attempts failed. Last error: %s",
-                        DEFAULT_MAX_RETRIES,
-                        err,
-                    )
-            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-                # Retry on other network errors (connection issues, timeouts)
-                last_error = err
-                if attempt < DEFAULT_MAX_RETRIES - 1:
-                    _LOGGER.warning(
-                        "Fetch attempt %d failed: %s. Retrying in %d seconds...",
-                        attempt + 1,
-                        err,
-                        DEFAULT_RETRY_WAIT,
-                    )
-                    await asyncio.sleep(DEFAULT_RETRY_WAIT)
-                else:
-                    _LOGGER.error(
-                        "All %d fetch attempts failed. Last error: %s",
-                        DEFAULT_MAX_RETRIES,
-                        err,
-                    )
-            except Exception as err:
-                # Log and re-raise unexpected errors immediately
-                _LOGGER.error("Unexpected error during fetch: %s", err, exc_info=True)
+                raise
+            else:
+                # 5xx server error
+                _LOGGER.error("Server error %d: %s", err.status, err.message)
                 raise
 
-        if last_error:
-            raise last_error
-        raise RuntimeError("Failed to fetch data after all retry attempts")
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            # Network errors
+            _LOGGER.error("Network error during fetch: %s", err)
+            self._circuit_breaker.record_failure()
+            raise
+
+        except Exception as err:
+            # Unexpected errors
+            _LOGGER.error("Unexpected error during fetch: %s", err, exc_info=True)
+            self._circuit_breaker.record_failure()
+            raise
