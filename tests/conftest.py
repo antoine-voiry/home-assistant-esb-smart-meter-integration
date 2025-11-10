@@ -1,7 +1,9 @@
 """Test configuration and fixtures."""
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.fixture
@@ -27,13 +29,13 @@ def sample_csv_data():
     """Sample CSV data for testing."""
     now = datetime.now()
     csv_lines = ["Read Date and End Time,Read Value,Read Type,MPRN"]
-    
+
     # Add data for last 30 days
     for i in range(30):
         date = now - timedelta(days=i)
         date_str = date.strftime("%d-%m-%Y %H:%M")
         csv_lines.append(f"{date_str},1.5,Active Import,12345678901")
-    
+
     return "\n".join(csv_lines)
 
 

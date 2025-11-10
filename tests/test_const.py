@@ -1,23 +1,20 @@
 """Tests for ESB Smart Meter constants."""
-import pytest
+
 from datetime import timedelta
 
-from custom_components.esb_smart_meter.const import (
-    DOMAIN,
-    CONF_USERNAME,
-    CONF_PASSWORD,
-    CONF_MPRN,
-    DEFAULT_SCAN_INTERVAL,
-    DEFAULT_TIMEOUT,
-    DEFAULT_MAX_RETRIES,
-    MAX_CSV_SIZE_MB,
-    MAX_DATA_AGE_DAYS,
-    CSV_COLUMN_DATE,
-    CSV_COLUMN_VALUE,
-    CSV_DATE_FORMAT,
-    MANUFACTURER,
-    MODEL,
-)
+import pytest
+
+from custom_components.esb_smart_meter.const import (CONF_MPRN, CONF_PASSWORD,
+                                                     CONF_USERNAME,
+                                                     CSV_COLUMN_DATE,
+                                                     CSV_COLUMN_VALUE,
+                                                     CSV_DATE_FORMAT,
+                                                     DEFAULT_MAX_RETRIES,
+                                                     DEFAULT_SCAN_INTERVAL,
+                                                     DEFAULT_TIMEOUT, DOMAIN,
+                                                     MANUFACTURER,
+                                                     MAX_CSV_SIZE_MB,
+                                                     MAX_DATA_AGE_DAYS, MODEL)
 
 
 def test_domain():

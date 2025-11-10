@@ -1,9 +1,13 @@
 """Tests for config flow."""
-import pytest
+
 from unittest.mock import MagicMock, patch
 
-from custom_components.esb_smart_meter.config_flow import ESBSmartMeterConfigFlow
-from custom_components.esb_smart_meter.const import CONF_USERNAME, CONF_PASSWORD, CONF_MPRN
+import pytest
+
+from custom_components.esb_smart_meter.config_flow import \
+    ESBSmartMeterConfigFlow
+from custom_components.esb_smart_meter.const import (CONF_MPRN, CONF_PASSWORD,
+                                                     CONF_USERNAME)
 
 
 class TestConfigFlow:
@@ -22,7 +26,7 @@ class TestConfigFlow:
     async def test_user_form(self, flow):
         """Test user form is shown."""
         result = await flow.async_step_user(user_input=None)
-        
+
         assert result["type"] == "form"
         assert result["step_id"] == "user"
         assert result["errors"] == {}
@@ -36,10 +40,11 @@ class TestConfigFlow:
             CONF_MPRN: "12345678901",
         }
 
-        with patch.object(flow, 'async_set_unique_id'), \
-             patch.object(flow, '_abort_if_unique_id_configured'):
+        with patch.object(flow, "async_set_unique_id"), patch.object(
+            flow, "_abort_if_unique_id_configured"
+        ):
             result = await flow.async_step_user(user_input=user_input)
-        
+
         assert result["type"] == "create_entry"
         assert result["title"] == "ESB Smart Meter (12345678901)"
         assert result["data"] == user_input
@@ -54,7 +59,7 @@ class TestConfigFlow:
         }
 
         result = await flow.async_step_user(user_input=user_input)
-        
+
         assert result["type"] == "form"
         assert result["errors"] == {CONF_MPRN: "invalid_mprn"}
 
@@ -68,7 +73,7 @@ class TestConfigFlow:
         }
 
         result = await flow.async_step_user(user_input=user_input)
-        
+
         assert result["type"] == "form"
         assert result["errors"] == {CONF_MPRN: "invalid_mprn"}
 
@@ -86,7 +91,7 @@ class TestConfigFlow:
         }
 
         result = await flow.async_step_user(user_input=user_input)
-        
+
         assert result["type"] == "form"
         assert result["errors"] == {"base": "mprn_exists"}
 
@@ -99,9 +104,10 @@ class TestConfigFlow:
             CONF_MPRN: " 12345678901 ",  # With whitespace
         }
 
-        with patch.object(flow, 'async_set_unique_id'), \
-             patch.object(flow, '_abort_if_unique_id_configured'):
+        with patch.object(flow, "async_set_unique_id"), patch.object(
+            flow, "_abort_if_unique_id_configured"
+        ):
             result = await flow.async_step_user(user_input=user_input)
-        
+
         assert result["type"] == "create_entry"
         assert result["data"][CONF_MPRN] == "12345678901"  # Stripped
