@@ -90,7 +90,8 @@ async def async_setup_entry(
         ),
     ]
 
-    async_add_entities(sensors, True)
+    # Don't update before add - let the startup delay handle first update
+    async_add_entities(sensors, False)
 
 
 class BaseSensor(SensorEntity):
@@ -113,7 +114,7 @@ class BaseSensor(SensorEntity):
         self._attr_name = name
         self._attr_available = True
         self._startup_delay = startup_delay
-        self._first_update = True
+        self._setup_complete = False
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -129,18 +130,27 @@ class BaseSensor(SensorEntity):
     def _get_data(self, *, esb_data: ESBData) -> float:
         """Get the data for this sensor."""
 
-    async def async_update(self) -> None:
-        """Update the sensor state."""
-        # Apply startup delay on first update only
-        if self._first_update and self._startup_delay > 0:
+    async def async_added_to_hass(self) -> None:
+        """Handle entity added to Home Assistant."""
+        await super().async_added_to_hass()
+        self._setup_complete = True
+        
+        # Schedule delayed first update if needed
+        if self._startup_delay > 0:
             _LOGGER.info(
-                "Delaying first update for %s by %.1f seconds",
+                "Scheduling delayed first update for %s in %.1f seconds",
                 self._attr_name,
                 self._startup_delay,
             )
-            await asyncio.sleep(self._startup_delay)
-            self._first_update = False
+            # Schedule the update to happen after the delay
+            async def delayed_update():
+                await asyncio.sleep(self._startup_delay)
+                await self.async_update_ha_state(force_refresh=True)
+            
+            self.hass.async_create_task(delayed_update())
 
+    async def async_update(self) -> None:
+        """Update the sensor state."""
         try:
             esb_data = await self._esb_api.fetch()
             if esb_data:
