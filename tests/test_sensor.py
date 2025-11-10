@@ -145,7 +145,7 @@ class TestBaseSensor:
     def sample_esb_data(self):
         """Create sample ESB data."""
         return ESBData(
-            csv_data=[
+            data=[
                 {
                     "Read Date and End Time": "31-12-2024 00:30",
                     "Read Value": "1.5",
