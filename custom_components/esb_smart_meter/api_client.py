@@ -18,6 +18,7 @@ from .const import (DEFAULT_TIMEOUT, ESB_AUTH_BASE_URL, ESB_CONSUMPTION_URL,
                     ESB_DOWNLOAD_URL, ESB_LOGIN_URL, ESB_MYACCOUNT_URL,
                     ESB_TOKEN_URL, MAX_CSV_SIZE_MB, RATE_LIMIT_BACKOFF_MINUTES)
 from .models import ESBData
+from .session_manager import CaptchaRequiredException, SessionManager
 from .utils import get_human_like_delay, get_random_user_agent
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,11 +44,29 @@ class ESBDataApi:
         self._mprn = mprn
         self._timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
         self._circuit_breaker = CircuitBreaker()
+        self._session_manager = SessionManager(hass, mprn)
+        self._current_user_agent = None
 
     async def __login(self) -> dict[str, str]:
         """Login to ESB and return cookies (following the complete 8-step flow)."""
+        # Check for cached session first
+        cached_session = await self._session_manager.load_session()
+        if cached_session:
+            _LOGGER.info("Using cached session, skipping login")
+            # TODO: Optionally validate session before using
+            # For now, trust the expiry time
+            self._current_user_agent = cached_session.get("user_agent")
+            return {
+                "download_token": cached_session.get("download_token"),
+                "user_agent": self._current_user_agent,
+            }
+        
+        # No cached session, perform full login
+        _LOGGER.info("No valid cached session, performing full login")
+        
         # Select a random user agent and use it consistently throughout the session
         user_agent = get_random_user_agent()
+        self._current_user_agent = user_agent
         _LOGGER.debug("Using User-Agent: %s", user_agent)
         _LOGGER.debug("Session cookie jar type: %s", type(self._session.cookie_jar))
         _LOGGER.debug(
@@ -198,7 +217,6 @@ class ESBDataApi:
                 )
 
                 # Check if CAPTCHA is present
-                # TODO: Improve CAPTCHA detection logic, ADD https://github.com/Xewdy444/Playwright-reCAPTCHA to workaround captcha but can this be legally pubklicly shared?
                 if (
                     "g-recaptcha-response" in content
                     or "captcha.html" in content
@@ -207,16 +225,16 @@ class ESBDataApi:
                 ):
                     _LOGGER.error("CAPTCHA detected in ESB response!")
                     _LOGGER.error(
-                        "ESB Networks has added CAPTCHA protection to their login flow."
+                        "ESB Networks requires CAPTCHA verification for login."
                     )
-                    _LOGGER.error("This prevents automated authentication.")
                     _LOGGER.error(
-                        "Response contains: captcha.html or g-recaptcha-response"
+                        "User intervention required - please provide session cookies manually."
                     )
-                    raise ValueError(
+                    # Raise custom exception that can be caught and trigger notification
+                    raise CaptchaRequiredException(
                         "ESB Networks requires CAPTCHA verification. "
-                        "Automated login is currently not possible. "
-                        "This may be temporary rate limiting or a permanent security change."
+                        "Please log in manually via the ESB website and provide your session cookies "
+                        "through the integration configuration."
                     )
 
                 soup = BeautifulSoup(content, "html.parser")
@@ -357,8 +375,23 @@ class ESBDataApi:
             _LOGGER.info(
                 "Authentication completed successfully for user: %s", self._username
             )
+            
+            # Save session for reuse
+            cookies = self._session_manager.extract_cookies_from_jar(
+                self._session.cookie_jar
+            )
+            await self._session_manager.save_session(
+                cookies=cookies,
+                user_agent=user_agent,
+                download_token=download_token,
+            )
+            _LOGGER.info("Session saved for future reuse")
+            
             return {"download_token": download_token, "user_agent": user_agent}
 
+        except CaptchaRequiredException:
+            # Re-raise CAPTCHA exceptions without modification
+            raise
         except aiohttp.ClientError as err:
             _LOGGER.error("Network error during login: %s", err)
             raise
@@ -468,6 +501,11 @@ class ESBDataApi:
             self._circuit_breaker.record_success()
 
             return ESBData(data=data)
+
+        except CaptchaRequiredException:
+            # Don't record as circuit breaker failure - this requires user action
+            _LOGGER.warning("CAPTCHA detected - user intervention required")
+            raise
 
         except ValueError as err:
             # Don't retry on data validation errors (invalid CSV, size limits, etc)

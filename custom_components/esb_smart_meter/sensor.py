@@ -14,9 +14,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api_client import ESBDataApi
 from .cache import ESBCachingApi
-from .const import (CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN,
-                    MANUFACTURER, MODEL)
+from .const import (
+    CAPTCHA_NOTIFICATION_ID,
+    CONF_MPRN,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DOMAIN,
+    MANUFACTURER,
+    MODEL,
+)
 from .models import ESBData
+from .session_manager import CaptchaRequiredException
 from .utils import create_esb_session, get_startup_delay
 
 _LOGGER = logging.getLogger(__name__)
@@ -158,6 +166,11 @@ class BaseSensor(SensorEntity):
                 self._attr_available = True
             else:
                 self._attr_available = False
+        except CaptchaRequiredException as err:
+            _LOGGER.warning("CAPTCHA detected for %s: %s", self._attr_name, err)
+            self._attr_available = False
+            # Send persistent notification to user
+            await self._send_captcha_notification()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             _LOGGER.error("Network error updating %s: %s", self._attr_name, err)
             self._attr_available = False
@@ -169,6 +182,38 @@ class BaseSensor(SensorEntity):
                 "Unexpected error updating %s: %s", self._attr_name, err, exc_info=True
             )
             self._attr_available = False
+
+    async def _send_captcha_notification(self) -> None:
+        """Send a persistent notification when CAPTCHA is detected."""
+        # Only send notification once (use the first sensor to detect it)
+        if not isinstance(self, TodaySensor):
+            return
+
+        notification_id = f"{CAPTCHA_NOTIFICATION_ID}_{self._mprn}"
+        
+        message = (
+            "ESB Networks requires CAPTCHA verification to log in.\n\n"
+            "**What to do:**\n"
+            "1. Open [ESB Networks](https://myaccount.esbnetworks.ie) in your browser\n"
+            "2. Log in with your credentials (solve the CAPTCHA)\n"
+            "3. Open your browser's Developer Tools (press F12)\n"
+            "4. Go to the Console tab\n"
+            "5. Type: `document.cookie` and press Enter\n"
+            "6. Copy the entire output\n"
+            "7. Go to Settings → Devices & Services → ESB Smart Meter → Configure\n"
+            "8. Select 'Provide Session Cookies' and paste the cookies\n\n"
+            "Your session will be saved and reused for up to 7 days."
+        )
+
+        await self.hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "notification_id": notification_id,
+                "title": "ESB Smart Meter: Manual Login Required",
+                "message": message,
+            },
+        )
 
 
 class TodaySensor(BaseSensor):

@@ -31,10 +31,12 @@ class TestAsyncSetupEntry:
     """Test async_setup_entry function."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant instance."""
         hass = MagicMock(spec=HomeAssistant)
         hass.data = {DOMAIN: {}}
+        hass.config = MagicMock()
+        hass.config.path.return_value = str(tmp_path / "esb_smart_meter")
         return hass
 
     @pytest.fixture
@@ -186,11 +188,11 @@ class TestBaseSensor:
             startup_delay=0.1,  # Short delay for testing
         )
 
-        # First update should include delay
+        # First update should work (startup delay is handled via async_added_to_hass)
         await sensor.async_update()
-        assert sensor._first_update is False
+        assert sensor._attr_available is True
 
-        # Second update should not delay
+        # Second update should also work
         mock_esb_api.fetch.reset_mock()
         await sensor.async_update()
         assert mock_esb_api.fetch.called

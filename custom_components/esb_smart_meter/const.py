@@ -34,6 +34,17 @@ SESSION_CACHE_MIN_HOURS = 6  # Minimum hours to cache session
 SESSION_CACHE_MAX_HOURS = 12  # Maximum hours to cache session
 SESSION_CACHE_KEY = "cached_session"
 SESSION_TIMESTAMP_KEY = "session_timestamp"
+SESSION_EXPIRY_HOURS = 168  # Session expiry: 7 days (168 hours)
+SESSION_FILE_NAME = "session_cache"  # Base filename for session storage
+SESSION_VALIDATION_ENDPOINTS = [
+    "https://myaccount.esbnetworks.ie/Api/HistoricConsumption",
+]
+
+# CAPTCHA handling
+CAPTCHA_NOTIFICATION_ID = "esb_smart_meter_captcha"
+CAPTCHA_COOLDOWN_HOURS = 24  # Don't spam notifications
+CONF_MANUAL_COOKIES = "manual_cookies"  # Config key for manual cookie input
+CONF_SESSION_COOKIES = "session_cookies"  # Config key for stored session cookies
 
 # Circuit breaker settings
 CIRCUIT_BREAKER_FAILURES = 3  # Open circuit after N failures
