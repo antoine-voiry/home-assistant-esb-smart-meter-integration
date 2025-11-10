@@ -114,12 +114,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the ESB Smart Meter sensor based on a config entry."""
-    # Implement startup delay to avoid immediate requests after HA boot
-    startup_delay = await get_startup_delay(hass)
-    if startup_delay > 0:
-        _LOGGER.info("Delaying ESB Smart Meter startup by %.1f seconds", startup_delay)
-        await asyncio.sleep(startup_delay)
-
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     mprn = entry.data[CONF_MPRN]
@@ -130,6 +124,9 @@ async def async_setup_entry(
     if entry.entry_id in hass.data[DOMAIN]:
         hass.data[DOMAIN][entry.entry_id]["session"] = session
 
+    # Calculate startup delay once for all sensors
+    startup_delay = await get_startup_delay(hass)
+    
     esb_api = ESBCachingApi(
         ESBDataApi(
             hass=hass,
@@ -141,21 +138,21 @@ async def async_setup_entry(
     )
 
     sensors = [
-        TodaySensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Today"),
+        TodaySensor(esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Today", startup_delay=startup_delay),
         Last24HoursSensor(
-            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 24 Hours"
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 24 Hours", startup_delay=startup_delay
         ),
         ThisWeekSensor(
-            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Week"
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Week", startup_delay=startup_delay
         ),
         Last7DaysSensor(
-            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 7 Days"
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 7 Days", startup_delay=startup_delay
         ),
         ThisMonthSensor(
-            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Month"
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: This Month", startup_delay=startup_delay
         ),
         Last30DaysSensor(
-            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 30 Days"
+            esb_api=esb_api, mprn=mprn, name="ESB Electricity Usage: Last 30 Days", startup_delay=startup_delay
         ),
     ]
 
@@ -168,12 +165,14 @@ class BaseSensor(SensorEntity):
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:flash"
 
-    def __init__(self, *, esb_api: "ESBCachingApi", mprn: str, name: str) -> None:
+    def __init__(self, *, esb_api: "ESBCachingApi", mprn: str, name: str, startup_delay: float = 0) -> None:
         """Initialize the sensor."""
         self._esb_api = esb_api
         self._mprn = mprn
         self._attr_name = name
         self._attr_available = True
+        self._startup_delay = startup_delay
+        self._first_update = True
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -191,6 +190,12 @@ class BaseSensor(SensorEntity):
 
     async def async_update(self) -> None:
         """Update the sensor state."""
+        # Apply startup delay on first update only
+        if self._first_update and self._startup_delay > 0:
+            _LOGGER.info("Delaying first update for %s by %.1f seconds", self._attr_name, self._startup_delay)
+            await asyncio.sleep(self._startup_delay)
+            self._first_update = False
+        
         try:
             esb_data = await self._esb_api.fetch()
             if esb_data:
