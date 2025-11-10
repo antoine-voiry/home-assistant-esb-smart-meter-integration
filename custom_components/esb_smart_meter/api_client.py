@@ -198,6 +198,7 @@ class ESBDataApi:
                 )
 
                 # Check if CAPTCHA is present
+                # TODO: Improve CAPTCHA detection logic, ADD https://github.com/Xewdy444/Playwright-reCAPTCHA to workaround captcha but can this be legally pubklicly shared?
                 if (
                     "g-recaptcha-response" in content
                     or "captcha.html" in content
