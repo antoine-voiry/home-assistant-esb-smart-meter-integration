@@ -8,7 +8,15 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN, MPRN_LENGTH
+from .const import (
+    CONF_MANUAL_COOKIES,
+    CONF_MPRN,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DOMAIN,
+    MPRN_LENGTH,
+)
+from .session_manager import SessionManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,4 +74,75 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
             description_placeholders={"mprn_format": "11-digit MPRN number"},
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> "ESBSmartMeterOptionsFlow":
+        """Get the options flow for this handler."""
+        return ESBSmartMeterOptionsFlow(config_entry)
+
+
+class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
+    """Handle options flow for ESB Smart Meter integration."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["manual_cookies"],
+        )
+
+    async def async_step_manual_cookies(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle manual cookie input for CAPTCHA bypass."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            cookie_string = user_input.get(CONF_MANUAL_COOKIES, "").strip()
+            
+            if not cookie_string:
+                errors[CONF_MANUAL_COOKIES] = "empty_cookies"
+            else:
+                # Validate and save cookies
+                mprn = self._config_entry.data[CONF_MPRN]
+                session_manager = SessionManager(self.hass, mprn)
+                
+                success = await session_manager.save_manual_cookies(cookie_string)
+                
+                if success:
+                    _LOGGER.info("Manual cookies saved successfully for MPRN %s", mprn)
+                    return self.async_create_entry(title="", data={})
+                else:
+                    errors[CONF_MANUAL_COOKIES] = "invalid_cookies"
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_MANUAL_COOKIES): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="manual_cookies",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders={
+                "cookie_instructions": (
+                    "1. Open https://myaccount.esbnetworks.ie in your browser\n"
+                    "2. Log in (solve CAPTCHA if needed)\n"
+                    "3. Open browser DevTools (F12)\n"
+                    "4. Go to Console tab\n"
+                    "5. Type: document.cookie\n"
+                    "6. Copy the entire output and paste below"
+                )
+            },
         )

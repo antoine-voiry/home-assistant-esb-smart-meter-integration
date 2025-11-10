@@ -24,5 +24,29 @@
     "abort": {
       "already_configured": "This MPRN is already configured"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ESB Smart Meter Options",
+        "menu_options": {
+          "manual_cookies": "Provide Session Cookies (CAPTCHA Bypass)"
+        }
+      },
+      "manual_cookies": {
+        "title": "Manual Cookie Input",
+        "description": "If ESB Networks is showing CAPTCHA, you can provide session cookies manually:\n\n{cookie_instructions}",
+        "data": {
+          "manual_cookies": "Cookie String"
+        },
+        "data_description": {
+          "manual_cookies": "Paste the entire cookie string from your browser"
+        }
+      }
+    },
+    "error": {
+      "empty_cookies": "Cookie string cannot be empty",
+      "invalid_cookies": "Failed to parse cookies. Please check the format and try again."
+    }
   }
 }
