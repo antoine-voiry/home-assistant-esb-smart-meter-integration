@@ -16,11 +16,15 @@ class ESBData:
     def __init__(self, *, data: List[Dict[str, Any]]) -> None:
         """Initialize with raw CSV data, filtering old data to prevent memory leaks."""
         # Validate CSV structure
-        if data and not self._validate_csv_structure(data[0]):
-            raise ValueError(
-                f"Invalid CSV structure. Expected columns: "
-                f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}"
-            )
+        if data:
+            if not self._validate_csv_structure(data[0]):
+                _LOGGER.error("CSV validation failed. First row keys: %s", list(data[0].keys()))
+                _LOGGER.error("Expected columns: %s, %s", CSV_COLUMN_DATE, CSV_COLUMN_VALUE)
+                _LOGGER.error("First row data: %s", data[0])
+                raise ValueError(
+                    f"Invalid CSV structure. Expected columns: "
+                    f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}"
+                )
 
         # Filter out data older than MAX_DATA_AGE_DAYS to prevent memory leaks
         cutoff_date = datetime.now() - timedelta(days=MAX_DATA_AGE_DAYS)
