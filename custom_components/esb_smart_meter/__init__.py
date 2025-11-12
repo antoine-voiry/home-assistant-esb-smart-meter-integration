@@ -7,7 +7,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN
+from .api_client import ESBDataApi
+from .const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .coordinator import ESBDataUpdateCoordinator
+from .utils import create_esb_session
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,11 +29,41 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ESB Smart Meter from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    
+    # Get credentials from config entry
+    username = entry.data[CONF_USERNAME]
+    password = entry.data[CONF_PASSWORD]
+    mprn = entry.data[CONF_MPRN]
+    
+    # Create shared session for this config entry
+    session = await create_esb_session(hass)
+    
+    # Create API client
+    esb_api = ESBDataApi(
+        hass=hass,
+        session=session,
+        username=username,
+        password=password,
+        mprn=mprn,
+    )
+    
+    # Create coordinator
+    coordinator = ESBDataUpdateCoordinator(
+        hass=hass,
+        esb_api=esb_api,
+        mprn=mprn,
+    )
+    
+    # Fetch initial data
+    await coordinator.async_config_entry_first_refresh()
+    
+    # Store coordinator and session for cleanup
     hass.data[DOMAIN][entry.entry_id] = {
-        "config": entry.data,
-        "session": None,  # Will be populated by sensor platform
+        "coordinator": coordinator,
+        "session": session,
     }
-
+    
+    # Forward setup to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True

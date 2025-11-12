@@ -1,20 +1,14 @@
-"""Integration tests for sensor.py."""
+"""Integration tests for sensor.py with coordinator pattern."""
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
-import aiohttp
 import pytest
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from custom_components.esb_smart_meter.const import (
-    CONF_MPRN,
-    CONF_PASSWORD,
-    CONF_USERNAME,
-    DOMAIN,
-)
+from custom_components.esb_smart_meter.const import DOMAIN
 from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.sensor import (
     Last24HoursSensor,
@@ -28,26 +22,40 @@ from custom_components.esb_smart_meter.sensor import (
 
 
 class TestAsyncSetupEntry:
-    """Test async_setup_entry function."""
+    """Test async_setup_entry function with coordinator."""
 
     @pytest.fixture
-    def mock_hass(self, tmp_path):
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.data = ESBData(
+            data=[
+                {
+                    "Read Date and End Time": "31-12-2024 00:30",
+                    "Read Value": "1.5",
+                    "Read Type": "Active Import",
+                    "MPRN": "12345678901",
+                }
+            ]
+        )
+        coordinator.mprn = "12345678901"
+        return coordinator
+
+    @pytest.fixture
+    def mock_hass(self, mock_coordinator):
         """Create mock Home Assistant instance."""
         hass = MagicMock(spec=HomeAssistant)
-        hass.data = {DOMAIN: {}}
-        hass.config = MagicMock()
-        hass.config.path.return_value = str(tmp_path / "esb_smart_meter")
+        hass.data = {
+            DOMAIN: {
+                "test_entry_id": {"coordinator": mock_coordinator}
+            }
+        }
         return hass
 
     @pytest.fixture
     def mock_config_entry(self):
         """Create mock config entry."""
         entry = MagicMock(spec=ConfigEntry)
-        entry.data = {
-            CONF_USERNAME: "test@example.com",
-            CONF_PASSWORD: "password123",
-            CONF_MPRN: "12345678901",
-        }
         entry.entry_id = "test_entry_id"
         return entry
 
@@ -58,17 +66,7 @@ class TestAsyncSetupEntry:
         """Test that setup_entry creates all 6 sensors."""
         async_add_entities = MagicMock()
 
-        # Mock session creation
-        mock_session = MagicMock()
-        with patch(
-            "custom_components.esb_smart_meter.sensor.create_esb_session",
-            return_value=mock_session,
-        ):
-            with patch(
-                "custom_components.esb_smart_meter.sensor.get_startup_delay",
-                return_value=0,
-            ):
-                await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
         # Verify 6 sensors were created
         assert async_add_entities.called
@@ -83,70 +81,15 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[4], ThisMonthSensor)
         assert isinstance(sensors[5], Last30DaysSensor)
 
-    @pytest.mark.asyncio
-    async def test_setup_entry_stores_session(self, mock_hass, mock_config_entry):
-        """Test that session is stored in hass.data for cleanup."""
-        async_add_entities = MagicMock()
-        mock_session = MagicMock()
-
-        # Initialize the entry data
-        mock_hass.data[DOMAIN][mock_config_entry.entry_id] = {}
-
-        with patch(
-            "custom_components.esb_smart_meter.sensor.create_esb_session",
-            return_value=mock_session,
-        ):
-            with patch(
-                "custom_components.esb_smart_meter.sensor.get_startup_delay",
-                return_value=0,
-            ):
-                await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
-
-        # Verify session stored
-        assert "session" in mock_hass.data[DOMAIN][mock_config_entry.entry_id]
-        assert (
-            mock_hass.data[DOMAIN][mock_config_entry.entry_id]["session"]
-            == mock_session
-        )
-
-    @pytest.mark.asyncio
-    async def test_setup_entry_applies_startup_delay(
-        self, mock_hass, mock_config_entry
-    ):
-        """Test that startup delay is calculated and passed to sensors."""
-        async_add_entities = MagicMock()
-        startup_delay = 15.5
-
-        with patch(
-            "custom_components.esb_smart_meter.sensor.create_esb_session",
-            return_value=MagicMock(),
-        ):
-            with patch(
-                "custom_components.esb_smart_meter.sensor.get_startup_delay",
-                return_value=startup_delay,
-            ):
-                await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
-
-        # Verify all sensors have startup delay
-        sensors = async_add_entities.call_args[0][0]
-        for sensor in sensors:
-            assert sensor._startup_delay == startup_delay
-
 
 class TestBaseSensor:
-    """Test BaseSensor class through concrete implementations."""
+    """Test BaseSensor class with coordinator."""
 
     @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESB API."""
-        api = MagicMock()
-        api.fetch = AsyncMock()
-        return api
-
-    @pytest.fixture
-    def sample_esb_data(self):
-        """Create sample ESB data."""
-        return ESBData(
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.data = ESBData(
             data=[
                 {
                     "Read Date and End Time": "31-12-2024 00:30",
@@ -156,151 +99,30 @@ class TestBaseSensor:
                 }
             ]
         )
+        return coordinator
 
-    @pytest.mark.asyncio
-    async def test_sensor_successful_update(self, mock_esb_api, sample_esb_data):
-        """Test successful sensor update."""
-        mock_esb_api.fetch.return_value = sample_esb_data
+    def test_sensor_reads_from_coordinator(self, mock_coordinator):
+        """Test sensor reads data from coordinator."""
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
 
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
+        value = sensor.native_value
 
-        await sensor.async_update()
+        assert value == mock_coordinator.data.today
 
-        assert sensor._attr_available is True
-        assert sensor._attr_native_value == sample_esb_data.today
+    def test_sensor_handles_no_data(self):
+        """Test sensor handles when coordinator has no data."""
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.data = None
 
-    @pytest.mark.asyncio
-    async def test_sensor_update_with_startup_delay(
-        self, mock_esb_api, sample_esb_data
-    ):
-        """Test sensor applies startup delay on first update."""
-        mock_esb_api.fetch.return_value = sample_esb_data
+        sensor = TodaySensor(coordinator=coordinator, mprn="12345678901")
 
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0.1,  # Short delay for testing
-        )
+        value = sensor.native_value
 
-        # First update should work (startup delay is handled via async_added_to_hass)
-        await sensor.async_update()
-        assert sensor._attr_available is True
+        assert value is None
 
-        # Second update should also work
-        mock_esb_api.fetch.reset_mock()
-        await sensor.async_update()
-        assert mock_esb_api.fetch.called
-
-    @pytest.mark.asyncio
-    async def test_sensor_update_no_data(self, mock_esb_api):
-        """Test sensor handles no data returned."""
-        mock_esb_api.fetch.return_value = None
-
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
-
-        await sensor.async_update()
-
-        assert sensor._attr_available is False
-
-    @pytest.mark.asyncio
-    async def test_sensor_update_network_error(self, mock_esb_api):
-        """ERROR PATH: Test sensor handles network errors."""
-        mock_esb_api.fetch.side_effect = aiohttp.ClientError("Network error")
-
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
-
-        await sensor.async_update()
-
-        assert sensor._attr_available is False
-
-    @pytest.mark.asyncio
-    async def test_sensor_update_timeout_error(self, mock_esb_api):
-        """ERROR PATH: Test sensor handles timeout errors."""
-        mock_esb_api.fetch.side_effect = asyncio.TimeoutError()
-
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
-
-        await sensor.async_update()
-
-        assert sensor._attr_available is False
-
-    @pytest.mark.asyncio
-    async def test_sensor_update_value_error(self, mock_esb_api):
-        """ERROR PATH: Test sensor handles data parsing errors."""
-        mock_esb_api.fetch.side_effect = ValueError("Invalid data format")
-
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
-
-        await sensor.async_update()
-
-        assert sensor._attr_available is False
-
-    @pytest.mark.asyncio
-    async def test_sensor_update_key_error(self, mock_esb_api):
-        """ERROR PATH: Test sensor handles missing key errors."""
-        mock_esb_api.fetch.side_effect = KeyError("missing_field")
-
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
-
-        await sensor.async_update()
-
-        assert sensor._attr_available is False
-
-    @pytest.mark.asyncio
-    async def test_sensor_update_unexpected_error(self, mock_esb_api):
-        """ERROR PATH: Test sensor handles unexpected errors."""
-        mock_esb_api.fetch.side_effect = RuntimeError("Unexpected error")
-
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
-
-        await sensor.async_update()
-
-        assert sensor._attr_available is False
-
-    def test_sensor_device_info(self, mock_esb_api):
+    def test_sensor_device_info(self, mock_coordinator):
         """Test sensor device info."""
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
 
         device_info = sensor.device_info
 
@@ -308,25 +130,15 @@ class TestBaseSensor:
         assert "ESB Smart Meter" in device_info["name"]
         assert "12345678901" in device_info["name"]
 
-    def test_sensor_unit_of_measurement(self, mock_esb_api):
+    def test_sensor_unit_of_measurement(self, mock_coordinator):
         """Test sensor has correct unit of measurement."""
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR
 
-    def test_sensor_icon(self, mock_esb_api):
+    def test_sensor_icon(self, mock_coordinator):
         """Test sensor has correct icon."""
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test Sensor",
-            startup_delay=0,
-        )
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_icon == "mdi:flash"
 
@@ -335,29 +147,19 @@ class TestTodaySensor:
     """Test TodaySensor class."""
 
     @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESB API."""
-        return MagicMock()
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
 
-    def test_unique_id(self, mock_esb_api):
+    def test_unique_id(self, mock_coordinator):
         """Test Today sensor unique ID."""
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_unique_id == "12345678901_today"
 
-    def test_get_data(self, mock_esb_api):
+    def test_get_data(self, mock_coordinator):
         """Test Today sensor gets correct data."""
-        sensor = TodaySensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
 
         esb_data = MagicMock()
         esb_data.today = 15.5
@@ -370,29 +172,19 @@ class TestLast24HoursSensor:
     """Test Last24HoursSensor class."""
 
     @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESB API."""
-        return MagicMock()
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
 
-    def test_unique_id(self, mock_esb_api):
+    def test_unique_id(self, mock_coordinator):
         """Test Last 24 Hours sensor unique ID."""
-        sensor = Last24HoursSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = Last24HoursSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_unique_id == "12345678901_last_24_hours"
 
-    def test_get_data(self, mock_esb_api):
+    def test_get_data(self, mock_coordinator):
         """Test Last 24 Hours sensor gets correct data."""
-        sensor = Last24HoursSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = Last24HoursSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         esb_data = MagicMock()
         esb_data.last_24_hours = 25.3
@@ -405,29 +197,19 @@ class TestThisWeekSensor:
     """Test ThisWeekSensor class."""
 
     @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESB API."""
-        return MagicMock()
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
 
-    def test_unique_id(self, mock_esb_api):
+    def test_unique_id(self, mock_coordinator):
         """Test This Week sensor unique ID."""
-        sensor = ThisWeekSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = ThisWeekSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_unique_id == "12345678901_this_week"
 
-    def test_get_data(self, mock_esb_api):
+    def test_get_data(self, mock_coordinator):
         """Test This Week sensor gets correct data."""
-        sensor = ThisWeekSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = ThisWeekSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         esb_data = MagicMock()
         esb_data.this_week = 85.7
@@ -440,29 +222,19 @@ class TestLast7DaysSensor:
     """Test Last7DaysSensor class."""
 
     @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESB API."""
-        return MagicMock()
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
 
-    def test_unique_id(self, mock_esb_api):
+    def test_unique_id(self, mock_coordinator):
         """Test Last 7 Days sensor unique ID."""
-        sensor = Last7DaysSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = Last7DaysSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_unique_id == "12345678901_last_7_days"
 
-    def test_get_data(self, mock_esb_api):
+    def test_get_data(self, mock_coordinator):
         """Test Last 7 Days sensor gets correct data."""
-        sensor = Last7DaysSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = Last7DaysSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         esb_data = MagicMock()
         esb_data.last_7_days = 175.2
@@ -475,29 +247,19 @@ class TestThisMonthSensor:
     """Test ThisMonthSensor class."""
 
     @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESB API."""
-        return MagicMock()
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
 
-    def test_unique_id(self, mock_esb_api):
+    def test_unique_id(self, mock_coordinator):
         """Test This Month sensor unique ID."""
-        sensor = ThisMonthSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = ThisMonthSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_unique_id == "12345678901_this_month"
 
-    def test_get_data(self, mock_esb_api):
+    def test_get_data(self, mock_coordinator):
         """Test This Month sensor gets correct data."""
-        sensor = ThisMonthSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = ThisMonthSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         esb_data = MagicMock()
         esb_data.this_month = 450.8
@@ -510,29 +272,19 @@ class TestLast30DaysSensor:
     """Test Last30DaysSensor class."""
 
     @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESB API."""
-        return MagicMock()
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
 
-    def test_unique_id(self, mock_esb_api):
+    def test_unique_id(self, mock_coordinator):
         """Test Last 30 Days sensor unique ID."""
-        sensor = Last30DaysSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = Last30DaysSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor._attr_unique_id == "12345678901_last_30_days"
 
-    def test_get_data(self, mock_esb_api):
+    def test_get_data(self, mock_coordinator):
         """Test Last 30 Days sensor gets correct data."""
-        sensor = Last30DaysSensor(
-            esb_api=mock_esb_api,
-            mprn="12345678901",
-            name="Test",
-            startup_delay=0,
-        )
+        sensor = Last30DaysSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         esb_data = MagicMock()
         esb_data.last_30_days = 520.6

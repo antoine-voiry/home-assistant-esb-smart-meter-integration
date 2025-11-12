@@ -1,31 +1,19 @@
 """Support for ESB Smart Meter sensors."""
 
-import asyncio
 import logging
 from abc import abstractmethod
 
-import aiohttp
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api_client import ESBDataApi
-from .cache import ESBCachingApi
-from .const import (
-    CAPTCHA_NOTIFICATION_ID,
-    CONF_MPRN,
-    CONF_PASSWORD,
-    CONF_USERNAME,
-    DOMAIN,
-    MANUFACTURER,
-    MODEL,
-)
+from .const import DOMAIN, MANUFACTURER, MODEL
+from .coordinator import ESBDataUpdateCoordinator
 from .models import ESBData
-from .session_manager import CaptchaRequiredException
-from .utils import create_esb_session, get_startup_delay
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,93 +24,44 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the ESB Smart Meter sensor based on a config entry."""
-    username = entry.data[CONF_USERNAME]
-    password = entry.data[CONF_PASSWORD]
-    mprn = entry.data[CONF_MPRN]
+    # Get coordinator from hass.data
+    coordinator: ESBDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
+        "coordinator"
+    ]
+    mprn = coordinator.mprn
 
-    session = await create_esb_session(hass)
-
-    # Store session reference for cleanup
-    if entry.entry_id in hass.data[DOMAIN]:
-        hass.data[DOMAIN][entry.entry_id]["session"] = session
-
-    # Calculate startup delay once for all sensors
-    startup_delay = await get_startup_delay(hass)
-
-    esb_api = ESBCachingApi(
-        ESBDataApi(
-            hass=hass,
-            session=session,
-            username=username,
-            password=password,
-            mprn=mprn,
-        )
-    )
-
+    # Create all sensors using the coordinator
     sensors = [
-        TodaySensor(
-            esb_api=esb_api,
-            mprn=mprn,
-            name="ESB Electricity Usage: Today",
-            startup_delay=startup_delay,
-        ),
-        Last24HoursSensor(
-            esb_api=esb_api,
-            mprn=mprn,
-            name="ESB Electricity Usage: Last 24 Hours",
-            startup_delay=startup_delay,
-        ),
-        ThisWeekSensor(
-            esb_api=esb_api,
-            mprn=mprn,
-            name="ESB Electricity Usage: This Week",
-            startup_delay=startup_delay,
-        ),
-        Last7DaysSensor(
-            esb_api=esb_api,
-            mprn=mprn,
-            name="ESB Electricity Usage: Last 7 Days",
-            startup_delay=startup_delay,
-        ),
-        ThisMonthSensor(
-            esb_api=esb_api,
-            mprn=mprn,
-            name="ESB Electricity Usage: This Month",
-            startup_delay=startup_delay,
-        ),
-        Last30DaysSensor(
-            esb_api=esb_api,
-            mprn=mprn,
-            name="ESB Electricity Usage: Last 30 Days",
-            startup_delay=startup_delay,
-        ),
+        TodaySensor(coordinator=coordinator, mprn=mprn),
+        Last24HoursSensor(coordinator=coordinator, mprn=mprn),
+        ThisWeekSensor(coordinator=coordinator, mprn=mprn),
+        Last7DaysSensor(coordinator=coordinator, mprn=mprn),
+        ThisMonthSensor(coordinator=coordinator, mprn=mprn),
+        Last30DaysSensor(coordinator=coordinator, mprn=mprn),
     ]
 
-    # Don't update before add - let the startup delay handle first update
-    async_add_entities(sensors, False)
+    # Add entities - coordinator handles updates
+    async_add_entities(sensors)
 
 
-class BaseSensor(SensorEntity):
-    """Base sensor class for ESB Smart Meter sensors."""
+class BaseSensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):
+    """Base sensor class for ESB Smart Meter sensors using coordinator."""
 
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
     _attr_icon = "mdi:flash"
 
     def __init__(
         self,
         *,
-        esb_api: ESBCachingApi,
+        coordinator: ESBDataUpdateCoordinator,
         mprn: str,
         name: str,
-        startup_delay: float = 0,
     ) -> None:
         """Initialize the sensor."""
-        self._esb_api = esb_api
+        super().__init__(coordinator)
         self._mprn = mprn
         self._attr_name = name
-        self._attr_available = True
-        self._startup_delay = startup_delay
-        self._setup_complete = False
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -136,95 +75,25 @@ class BaseSensor(SensorEntity):
 
     @abstractmethod
     def _get_data(self, *, esb_data: ESBData) -> float:
-        """Get the data for this sensor."""
+        """Get the data for this sensor from coordinator data."""
 
-    async def async_added_to_hass(self) -> None:
-        """Handle entity added to Home Assistant."""
-        await super().async_added_to_hass()
-        self._setup_complete = True
-        
-        # Schedule delayed first update if needed
-        if self._startup_delay > 0:
-            _LOGGER.info(
-                "Scheduling delayed first update for %s in %.1f seconds",
-                self._attr_name,
-                self._startup_delay,
-            )
-            # Schedule the update to happen after the delay
-            async def delayed_update():
-                await asyncio.sleep(self._startup_delay)
-                await self.async_update_ha_state(force_refresh=True)
-            
-            self.hass.async_create_task(delayed_update())
-
-    async def async_update(self) -> None:
-        """Update the sensor state."""
-        try:
-            esb_data = await self._esb_api.fetch()
-            if esb_data:
-                self._attr_native_value = self._get_data(esb_data=esb_data)
-                self._attr_available = True
-            else:
-                self._attr_available = False
-        except CaptchaRequiredException as err:
-            _LOGGER.warning("CAPTCHA detected for %s: %s", self._attr_name, err)
-            self._attr_available = False
-            # Send persistent notification to user
-            await self._send_captcha_notification()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            _LOGGER.error("Network error updating %s: %s", self._attr_name, err)
-            self._attr_available = False
-        except (ValueError, KeyError) as err:
-            _LOGGER.error("Data parsing error updating %s: %s", self._attr_name, err)
-            self._attr_available = False
-        except Exception as err:
-            _LOGGER.error(
-                "Unexpected error updating %s: %s", self._attr_name, err, exc_info=True
-            )
-            self._attr_available = False
-
-    async def _send_captcha_notification(self) -> None:
-        """Send a persistent notification when CAPTCHA is detected."""
-        # Only send notification once (use the first sensor to detect it)
-        if not isinstance(self, TodaySensor):
-            return
-
-        notification_id = f"{CAPTCHA_NOTIFICATION_ID}_{self._mprn}"
-        
-        message = (
-            "ESB Networks requires CAPTCHA verification to log in.\n\n"
-            "**What to do:**\n"
-            "1. Open [ESB Networks](https://myaccount.esbnetworks.ie) in your browser\n"
-            "2. Log in with your credentials (solve the CAPTCHA)\n"
-            "3. Open your browser's Developer Tools (press F12)\n"
-            "4. Go to the Console tab\n"
-            "5. Type: `document.cookie` and press Enter\n"
-            "6. Copy the entire output\n"
-            "7. Go to Settings → Devices & Services → ESB Smart Meter → Configure\n"
-            "8. Select 'Provide Session Cookies' and paste the cookies\n\n"
-            "Your session will be saved and reused for up to 7 days."
-        )
-
-        await self.hass.services.async_call(
-            "persistent_notification",
-            "create",
-            {
-                "notification_id": notification_id,
-                "title": "ESB Smart Meter: Manual Login Required",
-                "message": message,
-            },
-        )
+    @property
+    def native_value(self) -> float | None:
+        """Return the state of the sensor."""
+        if self.coordinator.data is None:
+            return None
+        return self._get_data(esb_data=self.coordinator.data)
 
 
 class TodaySensor(BaseSensor):
     """Sensor for today's electricity usage."""
 
-    def __init__(
-        self, *, esb_api: ESBCachingApi, mprn: str, name: str, startup_delay: float = 0
-    ) -> None:
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
         super().__init__(
-            esb_api=esb_api, mprn=mprn, name=name, startup_delay=startup_delay
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Usage: Today",
         )
         self._attr_unique_id = f"{mprn}_today"
 
@@ -236,12 +105,12 @@ class TodaySensor(BaseSensor):
 class Last24HoursSensor(BaseSensor):
     """Sensor for last 24 hours electricity usage."""
 
-    def __init__(
-        self, *, esb_api: ESBCachingApi, mprn: str, name: str, startup_delay: float = 0
-    ) -> None:
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
         super().__init__(
-            esb_api=esb_api, mprn=mprn, name=name, startup_delay=startup_delay
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Usage: Last 24 Hours",
         )
         self._attr_unique_id = f"{mprn}_last_24_hours"
 
@@ -253,12 +122,12 @@ class Last24HoursSensor(BaseSensor):
 class ThisWeekSensor(BaseSensor):
     """Sensor for this week's electricity usage."""
 
-    def __init__(
-        self, *, esb_api: ESBCachingApi, mprn: str, name: str, startup_delay: float = 0
-    ) -> None:
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
         super().__init__(
-            esb_api=esb_api, mprn=mprn, name=name, startup_delay=startup_delay
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Usage: This Week",
         )
         self._attr_unique_id = f"{mprn}_this_week"
 
@@ -270,12 +139,12 @@ class ThisWeekSensor(BaseSensor):
 class Last7DaysSensor(BaseSensor):
     """Sensor for last 7 days electricity usage."""
 
-    def __init__(
-        self, *, esb_api: ESBCachingApi, mprn: str, name: str, startup_delay: float = 0
-    ) -> None:
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
         super().__init__(
-            esb_api=esb_api, mprn=mprn, name=name, startup_delay=startup_delay
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Usage: Last 7 Days",
         )
         self._attr_unique_id = f"{mprn}_last_7_days"
 
@@ -287,12 +156,12 @@ class Last7DaysSensor(BaseSensor):
 class ThisMonthSensor(BaseSensor):
     """Sensor for this month's electricity usage."""
 
-    def __init__(
-        self, *, esb_api: ESBCachingApi, mprn: str, name: str, startup_delay: float = 0
-    ) -> None:
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
         super().__init__(
-            esb_api=esb_api, mprn=mprn, name=name, startup_delay=startup_delay
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Usage: This Month",
         )
         self._attr_unique_id = f"{mprn}_this_month"
 
@@ -304,12 +173,12 @@ class ThisMonthSensor(BaseSensor):
 class Last30DaysSensor(BaseSensor):
     """Sensor for last 30 days electricity usage."""
 
-    def __init__(
-        self, *, esb_api: ESBCachingApi, mprn: str, name: str, startup_delay: float = 0
-    ) -> None:
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
         super().__init__(
-            esb_api=esb_api, mprn=mprn, name=name, startup_delay=startup_delay
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Usage: Last 30 Days",
         )
         self._attr_unique_id = f"{mprn}_last_30_days"
 
