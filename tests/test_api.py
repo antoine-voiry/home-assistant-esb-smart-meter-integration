@@ -7,7 +7,6 @@ import aiohttp
 import pytest
 
 from custom_components.esb_smart_meter.api_client import ESBDataApi
-from custom_components.esb_smart_meter.cache import ESBCachingApi
 
 
 class TestESBDataApi:
@@ -252,61 +251,6 @@ class TestESBDataApi:
                     assert result is not None
                     # Circuit breaker should be reset after success
                     assert esb_api._circuit_breaker._failure_count == 0
-
-
-class TestESBCachingApi:
-    """Test ESBCachingApi class."""
-
-    @pytest.fixture
-    def mock_esb_api(self):
-        """Create mock ESBDataApi."""
-        api = MagicMock()
-        api.fetch = AsyncMock()
-        return api
-
-    @pytest.fixture
-    def caching_api(self, mock_esb_api):
-        """Create ESBCachingApi instance."""
-        return ESBCachingApi(mock_esb_api)
-
-    @pytest.mark.asyncio
-    async def test_cache_miss(self, caching_api, mock_esb_api):
-        """Test cache miss triggers fetch."""
-        mock_data = MagicMock()
-        mock_esb_api.fetch.return_value = mock_data
-
-        result = await caching_api.fetch()
-
-        assert result == mock_data
-        mock_esb_api.fetch.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cache_hit(self, caching_api, mock_esb_api):
-        """Test cache hit doesn't trigger fetch."""
-        mock_data = MagicMock()
-        mock_esb_api.fetch.return_value = mock_data
-
-        # First call
-        result1 = await caching_api.fetch()
-        # Second call (should use cache)
-        result2 = await caching_api.fetch()
-
-        assert result1 == mock_data
-        assert result2 == mock_data
-        # Should only fetch once
-        assert mock_esb_api.fetch.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_cache_error_handling(self, caching_api, mock_esb_api):
-        """Test cache handles fetch errors."""
-        mock_esb_api.fetch.side_effect = Exception("Fetch failed")
-
-        with pytest.raises(Exception, match="Fetch failed"):
-            await caching_api.fetch()
-
-        # Verify cache is cleared on error
-        assert caching_api._cached_data is None
-        assert caching_api._cached_data_timestamp is None
 
 
 class TestESBDataApiCachedSession:
