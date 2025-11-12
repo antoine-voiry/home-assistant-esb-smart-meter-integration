@@ -34,7 +34,18 @@ class ESBData:
     @staticmethod
     def _validate_csv_structure(row: dict[str, Any]) -> bool:
         """Validate that required CSV columns exist."""
-        return CSV_COLUMN_DATE in row and CSV_COLUMN_VALUE in row
+        required_columns = [CSV_COLUMN_DATE, CSV_COLUMN_VALUE]
+        available_columns = list(row.keys())
+        has_required = all(col in row for col in required_columns)
+        
+        if not has_required:
+            _LOGGER.error(
+                "CSV validation failed. Required: %s, Available: %s",
+                required_columns,
+                available_columns
+            )
+        
+        return has_required
 
     def _filter_and_parse_data(
         self, data: list[dict[str, Any]], cutoff_date: datetime
