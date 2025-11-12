@@ -1,4 +1,11 @@
-"""Caching layer for ESB Smart Meter integration."""
+"""
+DEPRECATED: Caching layer for ESB Smart Meter integration.
+
+This module is deprecated and replaced by the DataUpdateCoordinator pattern.
+It is kept for backward compatibility but should not be used in new code.
+
+Use coordinator.ESBDataUpdateCoordinator instead.
+"""
 
 import asyncio
 import logging
