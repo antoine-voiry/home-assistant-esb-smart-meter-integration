@@ -280,6 +280,8 @@ class TestESBDataApiCachedSession:
 
         with patch.object(
             esb_api._session_manager, "load_session", return_value=cached_session
+        ), patch.object(
+            esb_api._session_manager, "validate_session_cookies", return_value=True
         ):
             result = await esb_api._ESBDataApi__login()
             

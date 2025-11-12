@@ -41,7 +41,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Local imports from the integration
-from custom_components.esb_smart_meter.sensor import ESBDataApi
+from custom_components.esb_smart_meter.api_client import ESBDataApi
 
 # Configure logging to show detailed debug information
 logging.basicConfig(

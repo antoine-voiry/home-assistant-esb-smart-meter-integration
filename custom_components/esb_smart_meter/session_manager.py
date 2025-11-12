@@ -3,8 +3,11 @@
 import json
 import logging
 from datetime import datetime, timedelta
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
+
+import aiohttp
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -197,13 +200,48 @@ class SessionManager:
         Returns:
             True if cookies are valid and session is active
         """
-        # This is a placeholder for actual validation
-        # In production, this would make a lightweight request to ESB
-        # to verify the session is still authenticated
-        
-        # For now, we trust the expiry time
-        # TODO: Implement actual session validation request
-        return True
+        try:
+            # Create a temporary session for validation
+            session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar(unsafe=True),
+                timeout=aiohttp.ClientTimeout(total=30),
+            )
+            
+            # Load the cookies into the session
+            for name, value in cookies.items():
+                # Create a basic cookie - domain and path will be set automatically
+                cookie = SimpleCookie()
+                cookie[name] = value
+                # Add to jar with ESB domain
+                session.cookie_jar.update_cookies(cookie, "https://myaccount.esbnetworks.ie")
+            
+            validation_headers = {
+                "User-Agent": user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Referer": "https://myaccount.esbnetworks.ie/",
+            }
+            
+            # Try to access a protected page that requires authentication
+            async with session.get(
+                "https://myaccount.esbnetworks.ie/",  # Main account page
+                headers=validation_headers,
+                allow_redirects=False,  # Don't follow redirects to login
+            ) as response:
+                await session.close()
+                
+                # If we get a 200 response, session is valid
+                if response.status == 200:
+                    _LOGGER.debug("Session validation successful - received 200 response")
+                    return True
+                else:
+                    _LOGGER.debug("Session validation failed - received %d response", response.status)
+                    return False
+                    
+        except Exception as err:
+            _LOGGER.debug("Session validation failed with exception: %s", err)
+            if 'session' in locals():
+                await session.close()
+            return False
 
     def extract_cookies_from_jar(self, cookie_jar) -> dict[str, str]:
         """Extract cookies from aiohttp cookie jar.
@@ -228,10 +266,21 @@ class SessionManager:
             cookie_jar: aiohttp.CookieJar instance
             cookies: Dictionary of cookie name -> value
         """
-        # Note: This is a simplified version
-        # In production, we'd need to reconstruct full cookie objects with domain, path, etc.
-        # For now, we'll let the session handle cookie management
-        _LOGGER.debug("Would load %d cookies to jar", len(cookies))
+        from yarl import URL
+        
+        esb_url = URL("https://myaccount.esbnetworks.ie")
+        
+        for name, value in cookies.items():
+            # Create a proper cookie object with domain and path
+            cookie = SimpleCookie()
+            cookie[name] = value
+            cookie[name]['domain'] = 'myaccount.esbnetworks.ie'
+            cookie[name]['path'] = '/'
+            
+            # Add to jar
+            cookie_jar.update_cookies(cookie, esb_url)
+        
+        _LOGGER.debug("Loaded %d cookies to jar", len(cookies))
 
     async def save_manual_cookies(self, cookie_string: str) -> bool:
         """Save manually provided cookies from user (for CAPTCHA bypass).
