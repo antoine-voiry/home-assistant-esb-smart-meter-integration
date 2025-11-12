@@ -53,13 +53,23 @@ class ESBDataApi:
         cached_session = await self._session_manager.load_session()
         if cached_session:
             _LOGGER.info("Using cached session, skipping login")
-            # TODO: Optionally validate session before using
-            # For now, trust the expiry time
-            self._current_user_agent = cached_session.get("user_agent")
-            return {
-                "download_token": cached_session.get("download_token"),
-                "user_agent": self._current_user_agent,
-            }
+            
+            # Validate the session is still working before using it
+            cookies = cached_session.get("cookies", {})
+            user_agent = cached_session.get("user_agent", "")
+            
+            if await self._session_manager.validate_session_cookies(cookies, user_agent):
+                _LOGGER.info("Cached session validated successfully")
+                # Load cookies into current session
+                self._session_manager.load_cookies_to_jar(self._session.cookie_jar, cookies)
+                self._current_user_agent = user_agent
+                return {
+                    "download_token": cached_session.get("download_token"),
+                    "user_agent": self._current_user_agent,
+                }
+            else:
+                _LOGGER.warning("Cached session validation failed, performing fresh login")
+                await self._session_manager.clear_session()
         
         # No cached session, perform full login
         _LOGGER.info("No valid cached session, performing full login")
@@ -424,11 +434,14 @@ class ESBDataApi:
 
             _LOGGER.debug("Request 8: Downloading CSV data for MPRN %s", self._mprn)
 
+            # Use longer timeout for CSV downloads (they can be large)
+            csv_timeout = aiohttp.ClientTimeout(total=120)  # 2 minutes for large CSV files
+
             async with self._session.post(
                 ESB_DOWNLOAD_URL,
                 headers=download_headers,
                 json=payload,
-                timeout=self._timeout,
+                timeout=csv_timeout,
             ) as response:
                 response.raise_for_status()
 
@@ -458,6 +471,13 @@ class ESBDataApi:
                     _LOGGER.error("HTML preview: %s", csv_data[:500].replace('\n', '\\n').replace('\r', '\\r'))
                     raise ValueError("Received HTML response instead of expected CSV data")
 
+                # Check if CSV data appears truncated (should end with newline and have reasonable size)
+                if not csv_data.endswith('\n') and len(csv_data) > 1000:
+                    _LOGGER.warning("CSV data may be truncated - does not end with newline")
+                if actual_size_mb < 0.1 and len(csv_data.split('\n')) < 100:
+                    _LOGGER.warning("CSV data appears very small (%d bytes, %d lines) - may be truncated or empty",
+                                  len(csv_data), len(csv_data.split('\n')))
+
                 _LOGGER.debug("CSV data fetched successfully (%.2f MB)", actual_size_mb)
                 return csv_data
 
@@ -474,6 +494,14 @@ class ESBDataApi:
             if data:
                 _LOGGER.debug("CSV headers detected: %s", list(data[0].keys()))
                 _LOGGER.debug("First data row: %s", data[0])
+            else:
+                _LOGGER.warning("CSV parsing resulted in no data rows")
+            
+            # Check for suspiciously small datasets (may indicate truncated download)
+            if len(data) < 1000 and len(csv_data) > 10000:
+                _LOGGER.warning("Parsed only %d rows from %d bytes of CSV data - may be truncated", 
+                              len(data), len(csv_data))
+            
             return data
         except Exception as err:
             _LOGGER.error("Error parsing CSV data: %s", err)
