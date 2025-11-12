@@ -471,6 +471,9 @@ class ESBDataApi:
             reader = csv.DictReader(StringIO(csv_data))
             data = list(reader)
             _LOGGER.debug("Parsed %d rows from CSV data", len(data))
+            if data:
+                _LOGGER.debug("CSV headers detected: %s", list(data[0].keys()))
+                _LOGGER.debug("First data row: %s", data[0])
             return data
         except Exception as err:
             _LOGGER.error("Error parsing CSV data: %s", err)
