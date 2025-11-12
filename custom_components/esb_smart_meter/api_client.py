@@ -452,6 +452,12 @@ class ESBDataApi:
                         f"exceeds {MAX_CSV_SIZE_MB}MB limit"
                     )
 
+                # Check if response looks like HTML instead of CSV
+                if csv_data.strip().startswith('<') and ('<html' in csv_data.lower() or '<!doctype' in csv_data.lower()):
+                    _LOGGER.error("Received HTML response instead of CSV data")
+                    _LOGGER.error("HTML preview: %s", csv_data[:500].replace('\n', '\\n').replace('\r', '\\r'))
+                    raise ValueError("Received HTML response instead of expected CSV data")
+
                 _LOGGER.debug("CSV data fetched successfully (%.2f MB)", actual_size_mb)
                 return csv_data
 
@@ -468,6 +474,9 @@ class ESBDataApi:
             return data
         except Exception as err:
             _LOGGER.error("Error parsing CSV data: %s", err)
+            # Log first 500 characters of CSV data for debugging
+            csv_preview = csv_data[:500].replace('\n', '\\n').replace('\r', '\\r')
+            _LOGGER.error("CSV data preview: %s", csv_preview)
             raise
 
     async def fetch(self) -> ESBData:
