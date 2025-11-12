@@ -418,7 +418,8 @@ class ESBDataApi:
                 "Sec-Fetch-Mode": "cors",
                 "Sec-Fetch-Site": "same-origin",
             }
-            payload = {"mprn": self._mprn, "searchType": "intervalkw"}
+            # Use intervalkwh to get 30-minute readings already calculated in kWh
+            payload = {"mprn": self._mprn, "searchType": "intervalkwh"}
 
             _LOGGER.debug("Request 8: Downloading CSV data for MPRN %s", self._mprn)
 

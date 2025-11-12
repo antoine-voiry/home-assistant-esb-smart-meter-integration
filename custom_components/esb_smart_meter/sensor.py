@@ -3,7 +3,7 @@
 import logging
 from abc import abstractmethod
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
@@ -49,6 +49,9 @@ class BaseSensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):
 
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
+    # Use TOTAL (not TOTAL_INCREASING) since values are recalculated from ESB CSV
+    # which may have varying historical data availability
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:flash"
 
     def __init__(
