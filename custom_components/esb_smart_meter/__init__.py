@@ -1,6 +1,7 @@
 """The ESB Smart Meter integration."""
 
 import logging
+from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -8,7 +9,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .api_client import ESBDataApi
-from .const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .const import CONF_MPRN, CONF_PASSWORD, CONF_UPDATE_INTERVAL, CONF_USERNAME, DOMAIN
 from .coordinator import ESBDataUpdateCoordinator
 from .utils import create_esb_session
 
@@ -34,6 +35,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     mprn = entry.data[CONF_MPRN]
+    update_interval_hours = entry.options.get(CONF_UPDATE_INTERVAL, 24)
+    update_interval = timedelta(hours=update_interval_hours)
     
     # Create shared session for this config entry
     session = await create_esb_session(hass)
@@ -52,6 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass=hass,
         esb_api=esb_api,
         mprn=mprn,
+        update_interval=update_interval,
     )
     
     # Fetch initial data

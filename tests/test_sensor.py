@@ -11,9 +11,12 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from custom_components.esb_smart_meter.const import DOMAIN
 from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.sensor import (
+    ApiStatusSensor,
+    DataAgeSensor,
     Last24HoursSensor,
     Last30DaysSensor,
     Last7DaysSensor,
+    LastUpdateSensor,
     ThisMonthSensor,
     ThisWeekSensor,
     TodaySensor,
@@ -63,21 +66,27 @@ class TestAsyncSetupEntry:
     async def test_setup_entry_creates_all_sensors(
         self, mock_hass, mock_config_entry
     ):
-        """Test that setup_entry creates all 6 sensors."""
+        """Test that setup_entry creates all 9 sensors."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # Verify 6 sensors were created
+        # Verify 9 sensors were created
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 6
+        assert len(sensors) == 9
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
         assert isinstance(sensors[1], Last24HoursSensor)
         assert isinstance(sensors[2], ThisWeekSensor)
         assert isinstance(sensors[3], Last7DaysSensor)
+        assert isinstance(sensors[4], ThisMonthSensor)
+        assert isinstance(sensors[5], Last30DaysSensor)
+        # Diagnostic sensors
+        assert isinstance(sensors[6], LastUpdateSensor)
+        assert isinstance(sensors[7], ApiStatusSensor)
+        assert isinstance(sensors[8], DataAgeSensor)
         assert isinstance(sensors[4], ThisMonthSensor)
         assert isinstance(sensors[5], Last30DaysSensor)
 

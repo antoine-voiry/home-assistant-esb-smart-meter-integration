@@ -12,7 +12,9 @@ from .const import (
     CONF_MANUAL_COOKIES,
     CONF_MPRN,
     CONF_PASSWORD,
+    CONF_UPDATE_INTERVAL,
     CONF_USERNAME,
+    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MPRN_LENGTH,
 )
@@ -98,7 +100,31 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
         """Manage the options."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["manual_cookies"],
+            menu_options=["update_interval", "manual_cookies"],
+            description_placeholders={
+                "current_interval": self._config_entry.options.get(CONF_UPDATE_INTERVAL, 24),
+            },
+        )
+
+    async def async_step_update_interval(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure update interval."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        data_schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_UPDATE_INTERVAL,
+                    default=self._config_entry.options.get(CONF_UPDATE_INTERVAL, 24),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=168)),  # 1 hour to 1 week
+            }
+        )
+
+        return self.async_show_form(
+            step_id="update_interval",
+            data_schema=data_schema,
         )
 
     async def async_step_manual_cookies(

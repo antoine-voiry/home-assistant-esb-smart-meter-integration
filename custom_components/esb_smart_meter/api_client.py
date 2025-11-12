@@ -419,6 +419,7 @@ class ESBDataApi:
                 "Sec-Fetch-Site": "same-origin",
             }
             # Use intervalkwh to get 30-minute readings already calculated in kWh
+            # Note: ESB provides 30-minute interval data in kWh, so no conversion needed
             payload = {"mprn": self._mprn, "searchType": "intervalkwh"}
 
             _LOGGER.debug("Request 8: Downloading CSV data for MPRN %s", self._mprn)
