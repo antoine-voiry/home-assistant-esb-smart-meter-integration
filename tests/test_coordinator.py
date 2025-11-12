@@ -26,9 +26,9 @@ def mock_esb_data():
     """Create mock ESB data."""
     return ESBData(
         data=[
-            {"Read Date and End Time": "10-Nov-2025 00:30", "Read Value": "0.5"},
-            {"Read Date and End Time": "10-Nov-2025 01:00", "Read Value": "0.6"},
-            {"Read Date and End Time": "09-Nov-2025 23:30", "Read Value": "0.4"},
+            {"Read Date and End Time": "10-11-2025 00:30", "Read Value": "0.5"},
+            {"Read Date and End Time": "10-11-2025 01:00", "Read Value": "0.6"},
+            {"Read Date and End Time": "09-11-2025 23:30", "Read Value": "0.4"},
         ]
     )
 

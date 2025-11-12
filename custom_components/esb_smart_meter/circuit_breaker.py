@@ -75,8 +75,9 @@ class CircuitBreaker:
         self._is_open = False
         self._daily_attempts += 1
         _LOGGER.debug(
-            "Circuit breaker: Success recorded (daily attempts: %d)",
+            "Circuit breaker: Success recorded (daily attempts: %d/%d)",
             self._daily_attempts,
+            MAX_AUTH_ATTEMPTS_PER_DAY,
         )
 
     def record_failure(self) -> None:

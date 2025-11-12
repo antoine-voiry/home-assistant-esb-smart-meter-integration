@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Dict, List, Tuple, List, Tuple
 
 from .const import (CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_DATE_FORMAT,
                     MAX_DATA_AGE_DAYS)
@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 class ESBData:
     """Class to manipulate data retrieved from ESB with memory optimization."""
 
-    def __init__(self, *, data: list[dict[str, Any]]) -> None:
+    def __init__(self, *, data: List[Dict[str, Any]]) -> None:
         """Initialize with raw CSV data, filtering old data to prevent memory leaks."""
         # Validate CSV structure
         if data and not self._validate_csv_structure(data[0]):
@@ -24,7 +24,7 @@ class ESBData:
 
         # Filter out data older than MAX_DATA_AGE_DAYS to prevent memory leaks
         cutoff_date = datetime.now() - timedelta(days=MAX_DATA_AGE_DAYS)
-        self._data = self._filter_and_parse_data(data, cutoff_date)
+        self._data: List[Tuple[datetime, float]] = self._filter_and_parse_data(data, cutoff_date)
         _LOGGER.debug(
             "Loaded %d rows of data (filtered data older than %d days)",
             len(self._data),

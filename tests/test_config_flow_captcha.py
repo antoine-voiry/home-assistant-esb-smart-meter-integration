@@ -13,6 +13,7 @@ from custom_components.esb_smart_meter.const import (
     CONF_MANUAL_COOKIES,
     CONF_MPRN,
     CONF_PASSWORD,
+    CONF_UPDATE_INTERVAL,
     CONF_USERNAME,
     DOMAIN,
 )
@@ -38,6 +39,7 @@ def mock_config_entry():
         CONF_MPRN: "12345678901",
     }
     entry.entry_id = "test_entry_id"
+    entry.options = {}  # Add options attribute
     return entry
 
 
@@ -53,7 +55,33 @@ class TestOptionsFlow:
         result = await flow.async_step_init()
 
         assert result["type"] == "menu"
+        assert "update_interval" in result["menu_options"]
         assert "manual_cookies" in result["menu_options"]
+
+    @pytest.mark.asyncio
+    async def test_update_interval_step_form(self, mock_hass, mock_config_entry):
+        """Test the update interval step shows form."""
+        flow = ESBSmartMeterOptionsFlow(mock_config_entry)
+        flow.hass = mock_hass
+
+        result = await flow.async_step_update_interval()
+
+        assert result["type"] == "form"
+        assert result["step_id"] == "update_interval"
+        assert CONF_UPDATE_INTERVAL in result["data_schema"].schema
+
+    @pytest.mark.asyncio
+    async def test_update_interval_step_valid_input(self, mock_hass, mock_config_entry):
+        """Test update interval step with valid input."""
+        flow = ESBSmartMeterOptionsFlow(mock_config_entry)
+        flow.hass = mock_hass
+
+        user_input = {CONF_UPDATE_INTERVAL: 6}  # 6 hours
+
+        result = await flow.async_step_update_interval(user_input=user_input)
+
+        assert result["type"] == "create_entry"
+        assert result["data"] == user_input
 
     @pytest.mark.asyncio
     async def test_manual_cookies_step_form(self, mock_hass, mock_config_entry):

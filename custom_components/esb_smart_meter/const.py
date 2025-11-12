@@ -8,6 +8,7 @@ DOMAIN = "esb_smart_meter"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
 CONF_MPRN = "mprn"
+CONF_UPDATE_INTERVAL = "update_interval"
 
 # Default values
 DEFAULT_SCAN_INTERVAL = timedelta(hours=24)  # Retry next day if all attempts fail
