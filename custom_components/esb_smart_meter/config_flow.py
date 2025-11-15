@@ -14,7 +14,6 @@ from .const import (
     CONF_PASSWORD,
     CONF_UPDATE_INTERVAL,
     CONF_USERNAME,
-    DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MPRN_LENGTH,
 )
@@ -26,9 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 @callback
 def configured_instances(hass: HomeAssistant) -> set[str]:
     """Return a set of configured instances."""
-    return {
-        entry.data[CONF_MPRN] for entry in hass.config_entries.async_entries(DOMAIN)
-    }
+    return {entry.data[CONF_MPRN] for entry in hass.config_entries.async_entries(DOMAIN)}
 
 
 class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -36,9 +33,13 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return ESBSmartMeterOptionsFlow(config_entry)
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
@@ -78,14 +79,6 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={"mprn_format": "11-digit MPRN number"},
         )
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> "ESBSmartMeterOptionsFlow":
-        """Get the options flow for this handler."""
-        return ESBSmartMeterOptionsFlow(config_entry)
-
 
 class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for ESB Smart Meter integration."""
@@ -94,9 +87,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
         """Initialize options flow."""
         self._config_entry = config_entry
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage the options."""
         return self.async_show_menu(
             step_id="init",
@@ -106,9 +97,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
             },
         )
 
-    async def async_step_update_interval(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_update_interval(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Configure update interval."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -118,7 +107,9 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_UPDATE_INTERVAL,
                     default=self._config_entry.options.get(CONF_UPDATE_INTERVAL, 24),
-                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=168)),  # 1 hour to 1 week
+                ): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=168)
+                ),  # 1 hour to 1 week
             }
         )
 
@@ -127,29 +118,28 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
             data_schema=data_schema,
         )
 
-    async def async_step_manual_cookies(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_manual_cookies(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle manual cookie input for CAPTCHA bypass."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             cookie_string = user_input.get(CONF_MANUAL_COOKIES, "").strip()
-            
+
             if not cookie_string:
                 errors[CONF_MANUAL_COOKIES] = "empty_cookies"
             else:
                 # Validate and save cookies
                 mprn = self._config_entry.data[CONF_MPRN]
                 session_manager = SessionManager(self.hass, mprn)
-                
+
                 success = await session_manager.save_manual_cookies(cookie_string)
-                
+
                 if success:
                     _LOGGER.info("Manual cookies saved successfully for MPRN %s", mprn)
                     return self.async_create_entry(title="", data={})
-                else:
-                    errors[CONF_MANUAL_COOKIES] = "invalid_cookies"
+
+                _LOGGER.error("Failed to save manual cookies for MPRN %s", mprn)
+                errors[CONF_MANUAL_COOKIES] = "invalid_cookies"
 
         data_schema = vol.Schema(
             {

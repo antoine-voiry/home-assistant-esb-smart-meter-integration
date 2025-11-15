@@ -1,24 +1,24 @@
 """Tests for utility functions including security and corner cases."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
-from custom_components.esb_smart_meter.utils import (
-    get_human_like_delay,
-    get_startup_delay,
-    get_random_user_agent,
-    create_esb_session,
-)
+import pytest
+
 from custom_components.esb_smart_meter.const import (
-    MIN_REQUEST_DELAY,
-    MAX_REQUEST_DELAY,
-    REQUEST_DELAY_MEAN,
-    LONG_PAUSE_MIN,
-    LONG_PAUSE_MAX,
-    STARTUP_DELAY_MIN,
-    STARTUP_DELAY_MAX,
     HA_UPTIME_THRESHOLD,
+    LONG_PAUSE_MAX,
+    MAX_REQUEST_DELAY,
+    MIN_REQUEST_DELAY,
+    REQUEST_DELAY_MEAN,
+    STARTUP_DELAY_MAX,
+    STARTUP_DELAY_MIN,
+)
+from custom_components.esb_smart_meter.utils import (
+    create_esb_session,
+    get_human_like_delay,
+    get_random_user_agent,
+    get_startup_delay,
 )
 
 
@@ -64,9 +64,7 @@ class TestGetHumanLikeDelay:
             with patch("random.gauss", return_value=REQUEST_DELAY_MEAN):
                 delay = get_human_like_delay()
                 # Should be close to mean, clamped to bounds
-                expected = max(
-                    MIN_REQUEST_DELAY, min(MAX_REQUEST_DELAY, REQUEST_DELAY_MEAN)
-                )
+                expected = max(MIN_REQUEST_DELAY, min(MAX_REQUEST_DELAY, REQUEST_DELAY_MEAN))
                 assert abs(delay - expected) < 0.1
 
     def test_corner_case_extreme_gaussian_values(self):
@@ -312,7 +310,7 @@ class TestCreateEsbSession:
         # The unsafe=False parameter prevents IP address cookies
         # We can't directly access the unsafe attribute, but verify custom jar exists
         assert session.cookie_jar is not None
-        assert hasattr(session, '_connector') or hasattr(session, 'cookie_jar')
+        assert hasattr(session, "_connector") or hasattr(session, "cookie_jar")
 
         await session.close()
 

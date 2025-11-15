@@ -8,15 +8,14 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
-
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+from yarl import URL
 
 from .const import (
     DOMAIN,
     SESSION_EXPIRY_HOURS,
     SESSION_FILE_NAME,
-    SESSION_VALIDATION_ENDPOINTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,7 +35,7 @@ class SessionManager:
 
     def __init__(self, hass: HomeAssistant, mprn: str) -> None:
         """Initialize the session manager.
-        
+
         Args:
             hass: Home Assistant instance
             mprn: Meter Point Reference Number (used to namespace sessions)
@@ -45,7 +44,7 @@ class SessionManager:
         self._mprn = mprn
         self._storage_path = Path(hass.config.path(DOMAIN))
         self._session_file = self._storage_path / f"{SESSION_FILE_NAME}_{mprn}.json"
-        
+
         # Ensure storage directory exists (with error handling for tests)
         try:
             self._storage_path.mkdir(parents=True, exist_ok=True)
@@ -54,7 +53,7 @@ class SessionManager:
 
     async def load_session(self) -> dict[str, Any] | None:
         """Load a previously saved session from disk.
-        
+
         Returns:
             Session data dictionary if valid session exists, None otherwise
         """
@@ -64,10 +63,8 @@ class SessionManager:
                 return None
 
             # Read session data
-            session_data = await self._hass.async_add_executor_job(
-                self._read_session_file
-            )
-            
+            session_data = await self._hass.async_add_executor_job(self._read_session_file)
+
             if not session_data:
                 return None
 
@@ -103,7 +100,7 @@ class SessionManager:
         download_token: str | None = None,
     ) -> None:
         """Save session data to disk for reuse.
-        
+
         Args:
             cookies: Session cookies to save
             user_agent: User agent string used for this session
@@ -123,9 +120,7 @@ class SessionManager:
                 "mprn": self._mprn,
             }
 
-            await self._hass.async_add_executor_job(
-                self._write_session_file, session_data
-            )
+            await self._hass.async_add_executor_job(self._write_session_file, session_data)
 
             _LOGGER.info(
                 "Session saved successfully (expires: %s)",
@@ -142,10 +137,10 @@ class SessionManager:
 
     def _is_session_valid(self, session_data: dict[str, Any]) -> bool:
         """Check if session data is still valid.
-        
+
         Args:
             session_data: Session data dictionary
-            
+
         Returns:
             True if session is valid and not expired
         """
@@ -188,15 +183,13 @@ class SessionManager:
         except Exception as err:
             _LOGGER.error("Error clearing session: %s", err)
 
-    async def validate_session_cookies(
-        self, cookies: dict[str, str], user_agent: str
-    ) -> bool:
+    async def validate_session_cookies(self, cookies: dict[str, str], user_agent: str) -> bool:
         """Validate that session cookies are still working.
-        
+
         Args:
             cookies: Cookies to validate
             user_agent: User agent to use for validation request
-            
+
         Returns:
             True if cookies are valid and session is active
         """
@@ -206,7 +199,7 @@ class SessionManager:
                 cookie_jar=aiohttp.CookieJar(unsafe=True),
                 timeout=aiohttp.ClientTimeout(total=30),
             )
-            
+
             # Load the cookies into the session
             for name, value in cookies.items():
                 # Create a basic cookie - domain and path will be set automatically
@@ -214,13 +207,13 @@ class SessionManager:
                 cookie[name] = value
                 # Add to jar with ESB domain
                 session.cookie_jar.update_cookies(cookie, "https://myaccount.esbnetworks.ie")
-            
+
             validation_headers = {
                 "User-Agent": user_agent,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Referer": "https://myaccount.esbnetworks.ie/",
             }
-            
+
             # Try to access a protected page that requires authentication
             async with session.get(
                 "https://myaccount.esbnetworks.ie/",  # Main account page
@@ -228,72 +221,70 @@ class SessionManager:
                 allow_redirects=False,  # Don't follow redirects to login
             ) as response:
                 await session.close()
-                
+
                 # If we get a 200 response, session is valid
                 if response.status == 200:
                     _LOGGER.debug("Session validation successful - received 200 response")
                     return True
-                else:
-                    _LOGGER.debug("Session validation failed - received %d response", response.status)
-                    return False
-                    
+
+                _LOGGER.debug("Session validation failed - received %d response", response.status)
+                return False
+
         except Exception as err:
             _LOGGER.debug("Session validation failed with exception: %s", err)
-            if 'session' in locals():
+            if "session" in locals():
                 await session.close()
             return False
 
     def extract_cookies_from_jar(self, cookie_jar) -> dict[str, str]:
         """Extract cookies from aiohttp cookie jar.
-        
+
         Args:
             cookie_jar: aiohttp.CookieJar instance
-            
+
         Returns:
             Dictionary of cookie name -> value
         """
         cookies = {}
         for cookie in cookie_jar:
             cookies[cookie.key] = cookie.value
-        
+
         _LOGGER.debug("Extracted %d cookies from jar", len(cookies))
         return cookies
 
     def load_cookies_to_jar(self, cookie_jar, cookies: dict[str, str]) -> None:
         """Load cookies from dict into aiohttp cookie jar.
-        
+
         Args:
             cookie_jar: aiohttp.CookieJar instance
             cookies: Dictionary of cookie name -> value
         """
-        from yarl import URL
-        
         esb_url = URL("https://myaccount.esbnetworks.ie")
-        
+
         for name, value in cookies.items():
             # Create a proper cookie object with domain and path
             cookie = SimpleCookie()
             cookie[name] = value
-            cookie[name]['domain'] = 'myaccount.esbnetworks.ie'
-            cookie[name]['path'] = '/'
-            
+            cookie[name]["domain"] = "myaccount.esbnetworks.ie"
+            cookie[name]["path"] = "/"
+
             # Add to jar
             cookie_jar.update_cookies(cookie, esb_url)
-        
+
         _LOGGER.debug("Loaded %d cookies to jar", len(cookies))
 
     async def save_manual_cookies(self, cookie_string: str) -> bool:
         """Save manually provided cookies from user (for CAPTCHA bypass).
-        
+
         Args:
             cookie_string: Raw cookie string from browser
-            
+
         Returns:
             True if cookies were parsed and saved successfully
         """
         try:
             cookies = self._parse_cookie_string(cookie_string)
-            
+
             if not cookies:
                 _LOGGER.error("No cookies parsed from provided string")
                 return False
@@ -304,7 +295,7 @@ class SessionManager:
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
                 download_token=None,
             )
-            
+
             _LOGGER.info("Manual cookies saved successfully (%d cookies)", len(cookies))
             return True
 
@@ -314,18 +305,18 @@ class SessionManager:
 
     def _parse_cookie_string(self, cookie_string: str) -> dict[str, str]:
         """Parse cookie string from browser into dictionary.
-        
+
         Args:
             cookie_string: Cookie string in format "name1=value1; name2=value2"
-            
+
         Returns:
             Dictionary of cookie name -> value
         """
         cookies = {}
-        
+
         # Handle both formats: "name=value; name2=value2" and document.cookie format
         cookie_string = cookie_string.strip()
-        
+
         for part in cookie_string.split(";"):
             part = part.strip()
             if "=" in part:

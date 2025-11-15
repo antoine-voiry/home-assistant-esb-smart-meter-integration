@@ -1,6 +1,5 @@
 """Utility functions for ESB Smart Meter integration."""
 
-import asyncio
 import logging
 import random
 
@@ -8,10 +7,19 @@ import aiohttp
 import homeassistant.util.dt as dt_util
 from homeassistant.core import HomeAssistant
 
-from .const import (DEFAULT_TIMEOUT, HA_UPTIME_THRESHOLD, LONG_PAUSE_MAX,
-                    LONG_PAUSE_MIN, LONG_PAUSE_PROBABILITY, MAX_REQUEST_DELAY,
-                    MIN_REQUEST_DELAY, REQUEST_DELAY_MEAN,
-                    REQUEST_DELAY_STDDEV, STARTUP_DELAY_MAX, STARTUP_DELAY_MIN)
+from .const import (
+    DEFAULT_TIMEOUT,
+    HA_UPTIME_THRESHOLD,
+    LONG_PAUSE_MAX,
+    LONG_PAUSE_MIN,
+    LONG_PAUSE_PROBABILITY,
+    MAX_REQUEST_DELAY,
+    MIN_REQUEST_DELAY,
+    REQUEST_DELAY_MEAN,
+    REQUEST_DELAY_STDDEV,
+    STARTUP_DELAY_MAX,
+    STARTUP_DELAY_MIN,
+)
 from .user_agents import USER_AGENTS
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,8 +46,7 @@ async def get_startup_delay(hass: HomeAssistant) -> float:
     # Check how long Home Assistant has been running
     try:
         uptime_seconds = (
-            dt_util.utcnow()
-            - hass.data.get("homeassistant", {}).get("start_time", dt_util.utcnow())
+            dt_util.utcnow() - hass.data.get("homeassistant", {}).get("start_time", dt_util.utcnow())
         ).total_seconds()
     except (AttributeError, TypeError, KeyError):
         # If we can't determine uptime, assume HA just started
@@ -56,9 +63,7 @@ async def get_startup_delay(hass: HomeAssistant) -> float:
         )
         return delay
 
-    _LOGGER.debug(
-        "Home Assistant uptime is %.1f seconds, skipping startup delay", uptime_seconds
-    )
+    _LOGGER.debug("Home Assistant uptime is %.1f seconds, skipping startup delay", uptime_seconds)
     return 0
 
 
@@ -67,7 +72,7 @@ def get_random_user_agent() -> str:
     return random.choice(USER_AGENTS)
 
 
-async def create_esb_session(hass: HomeAssistant) -> aiohttp.ClientSession:
+async def create_esb_session(hass: HomeAssistant) -> aiohttp.ClientSession:  # pylint: disable=unused-argument
     """Creates a new, non-shared, lenient aiohttp ClientSession.
 
     The recommended approach for a custom component making external requests

@@ -2,8 +2,9 @@
 
 import logging
 from abc import abstractmethod
+from datetime import datetime, timezone
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
@@ -25,9 +26,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the ESB Smart Meter sensor based on a config entry."""
     # Get coordinator from hass.data
-    coordinator: ESBDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: ESBDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     mprn = coordinator.mprn
 
     # Create all sensors using the coordinator
@@ -42,6 +41,7 @@ async def async_setup_entry(
         LastUpdateSensor(coordinator=coordinator, mprn=mprn),
         ApiStatusSensor(coordinator=coordinator, mprn=mprn),
         DataAgeSensor(coordinator=coordinator, mprn=mprn),
+        CircuitBreakerStatusSensor(coordinator=coordinator, mprn=mprn),
     ]
 
     # Add entities - coordinator handles updates
@@ -222,9 +222,7 @@ class LastUpdateSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self._handle_coordinator_update)
-        )
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
@@ -234,6 +232,9 @@ class LastUpdateSensor(SensorEntity):
     def native_value(self) -> str | None:
         """Return the timestamp of the last successful update."""
         if self.coordinator.last_update_success is None:
+            return None
+        # last_update_success can be a bool initially, check if it's a datetime
+        if not isinstance(self.coordinator.last_update_success, datetime):
             return None
         return self.coordinator.last_update_success.isoformat()
 
@@ -266,9 +267,7 @@ class ApiStatusSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self._handle_coordinator_update)
-        )
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
@@ -312,9 +311,7 @@ class DataAgeSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""
-        self.async_on_remove(
-            self.coordinator.async_add_listener(self._handle_coordinator_update)
-        )
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
@@ -325,7 +322,132 @@ class DataAgeSensor(SensorEntity):
         """Return the age of the data in hours."""
         if self.coordinator.last_update_success is None:
             return None
-        
-        from datetime import datetime, timezone
+        # last_update_success can be a bool initially, check if it's a datetime
+        if not isinstance(self.coordinator.last_update_success, datetime):
+            return None
+
         age = datetime.now(timezone.utc) - self.coordinator.last_update_success
         return round(age.total_seconds() / 3600, 1)  # Hours with 1 decimal place
+
+
+class CircuitBreakerStatusSensor(SensorEntity):
+    """Sensor showing circuit breaker state and health."""
+
+    _attr_device_class = None
+    _attr_state_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_icon = "mdi:electric-switch"
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
+        """Initialize the sensor."""
+        super().__init__()
+        self.coordinator = coordinator
+        self._mprn = mprn
+        self._attr_name = "ESB Smart Meter: Circuit Breaker Status"
+        self._attr_unique_id = f"{mprn}_circuit_breaker_status"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information about this entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._mprn)},
+            name=f"ESB Smart Meter ({self._mprn})",
+            manufacturer=MANUFACTURER,
+            model=MODEL,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
+
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> str:
+        """Return circuit breaker state."""
+        cb = self.coordinator.esb_api._circuit_breaker
+        
+        if not hasattr(cb, '_is_open'):
+            return "unknown"
+        
+        now = datetime.now()
+        
+        # Check if circuit is open
+        if cb._is_open and cb._last_failure_time:
+            # Calculate backoff time
+            from .const import CIRCUIT_BREAKER_TIMEOUT, CIRCUIT_BREAKER_MAX_TIMEOUT
+            backoff_time = min(
+                CIRCUIT_BREAKER_TIMEOUT * (2 ** (cb._failure_count - 1)),
+                CIRCUIT_BREAKER_MAX_TIMEOUT,
+            )
+            elapsed = (now - cb._last_failure_time).total_seconds()
+            
+            if elapsed < backoff_time:
+                return "open"
+            return "half_open"
+        
+        return "closed"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional state attributes."""
+        cb = self.coordinator.esb_api._circuit_breaker
+        
+        if not hasattr(cb, '_failure_count'):
+            return {}
+        
+        attrs = {
+            "failure_count": cb._failure_count,
+            "daily_attempts": cb._daily_attempts,
+        }
+        
+        # Add constants for reference
+        from .const import (
+            CIRCUIT_BREAKER_FAILURES,
+            CIRCUIT_BREAKER_MAX_TIMEOUT,
+            MAX_AUTH_ATTEMPTS_PER_DAY,
+        )
+        attrs["failure_threshold"] = CIRCUIT_BREAKER_FAILURES
+        attrs["daily_limit"] = MAX_AUTH_ATTEMPTS_PER_DAY
+        
+        # Add backoff information if circuit is open
+        if cb._is_open and cb._last_failure_time:
+            now = datetime.now()
+            from .const import CIRCUIT_BREAKER_TIMEOUT
+            backoff_time = min(
+                CIRCUIT_BREAKER_TIMEOUT * (2 ** (cb._failure_count - 1)),
+                CIRCUIT_BREAKER_MAX_TIMEOUT,
+            )
+            elapsed = (now - cb._last_failure_time).total_seconds()
+            remaining = max(0, backoff_time - elapsed)
+            
+            attrs["backoff_seconds"] = int(backoff_time)
+            attrs["time_remaining_seconds"] = int(remaining)
+            attrs["time_remaining_minutes"] = round(remaining / 60, 1)
+            
+            if remaining > 0:
+                blocked_until = cb._last_failure_time
+                from datetime import timedelta
+                blocked_until = blocked_until + timedelta(seconds=backoff_time)
+                attrs["blocked_until"] = blocked_until.isoformat()
+        
+        if cb._last_failure_time:
+            attrs["last_failure"] = cb._last_failure_time.isoformat()
+        
+        if cb._daily_attempts_reset_time:
+            attrs["daily_counter_resets"] = cb._daily_attempts_reset_time.date().isoformat()
+        
+        return attrs
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on circuit breaker state."""
+        state = self.native_value
+        return {
+            "closed": "mdi:check-circle",
+            "open": "mdi:alert-circle",
+            "half_open": "mdi:refresh-circle",
+            "unknown": "mdi:help-circle",
+        }.get(state, "mdi:help-circle")
