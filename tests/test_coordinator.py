@@ -34,12 +34,13 @@ def mock_esb_data():
 
 
 @pytest.fixture
-def coordinator(hass, mock_esb_api):
+def coordinator(hass, mock_esb_api, mock_config_entry):
     """Create a coordinator instance."""
     return ESBDataUpdateCoordinator(
         hass=hass,
         esb_api=mock_esb_api,
         mprn="12345678901",
+        config_entry=mock_config_entry,
         update_interval=timedelta(minutes=30),
     )
 
@@ -62,7 +63,7 @@ class TestESBDataUpdateCoordinator:
         # Setup persistent notification service
         hass.services.async_register("persistent_notification", "create", Mock())
         hass.services.async_register("persistent_notification", "dismiss", Mock())
-        
+
         mock_esb_api.fetch.return_value = mock_esb_data
 
         result = await coordinator._async_update_data()
@@ -85,7 +86,7 @@ class TestESBDataUpdateCoordinator:
         # Setup persistent notification service
         hass.services.async_register("persistent_notification", "create", Mock())
         hass.services.async_register("persistent_notification", "dismiss", Mock())
-        
+
         mock_esb_api.fetch.side_effect = CaptchaRequiredException("CAPTCHA found")
         coordinator._captcha_notification_sent = False
 
@@ -112,14 +113,12 @@ class TestESBDataUpdateCoordinator:
         assert coordinator._captcha_notification_sent is True
 
     @pytest.mark.asyncio
-    async def test_captcha_notification_cleared_on_success(
-        self, coordinator, mock_esb_api, mock_esb_data, hass
-    ):
+    async def test_captcha_notification_cleared_on_success(self, coordinator, mock_esb_api, mock_esb_data, hass):
         """Test CAPTCHA notification is dismissed after successful fetch."""
         # Setup persistent notification service
         hass.services.async_register("persistent_notification", "create", Mock())
         hass.services.async_register("persistent_notification", "dismiss", Mock())
-        
+
         coordinator._captcha_notification_sent = True
         mock_esb_api.fetch.return_value = mock_esb_data
 
@@ -204,7 +203,7 @@ class TestESBDataUpdateCoordinator:
         # Setup persistent notification service
         hass.services.async_register("persistent_notification", "create", Mock())
         hass.services.async_register("persistent_notification", "dismiss", Mock())
-        
+
         mock_esb_api.fetch.return_value = mock_esb_data
 
         # First fetch
@@ -218,17 +217,15 @@ class TestESBDataUpdateCoordinator:
         assert mock_esb_api.fetch.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_coordinator_with_captcha_recovery(
-        self, coordinator, mock_esb_api, mock_esb_data, hass
-    ):
+    async def test_coordinator_with_captcha_recovery(self, coordinator, mock_esb_api, mock_esb_data, hass):
         """Test full cycle: CAPTCHA detected, then recovered."""
         # Setup persistent notification service
         hass.services.async_register("persistent_notification", "create", Mock())
         hass.services.async_register("persistent_notification", "dismiss", Mock())
-        
+
         # First call: CAPTCHA detected
         mock_esb_api.fetch.side_effect = CaptchaRequiredException("CAPTCHA found")
-        
+
         result = await coordinator._async_update_data()
         assert result is None
         assert coordinator._captcha_notification_sent is True
@@ -236,15 +233,15 @@ class TestESBDataUpdateCoordinator:
         # Second call: Still CAPTCHA (no new notification)
         result = await coordinator._async_update_data()
         assert result is None
-        
+
         assert coordinator._captcha_notification_sent is True
 
         # Third call: Success (notification dismissed)
         mock_esb_api.fetch.side_effect = None
         mock_esb_api.fetch.return_value = mock_esb_data
-        
+
         result = await coordinator._async_update_data()
-        
+
         assert result == mock_esb_data
         assert coordinator._captcha_notification_sent is False
         await hass.async_block_till_done()
@@ -255,7 +252,7 @@ class TestESBDataUpdateCoordinator:
         # Setup persistent notification service
         hass.services.async_register("persistent_notification", "create", Mock())
         hass.services.async_register("persistent_notification", "dismiss", Mock())
-        
+
         mock_esb_api.fetch.return_value = mock_esb_data
 
         with patch("custom_components.esb_smart_meter.coordinator._LOGGER") as mock_logger:
@@ -281,10 +278,10 @@ class TestESBDataUpdateCoordinator:
             # Should log one warning and one error
             assert mock_logger.warning.call_count >= 1
             assert mock_logger.error.call_count >= 1
-            
+
             warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
             error_calls = [call[0][0] for call in mock_logger.error.call_args_list]
-            
+
             assert any("CAPTCHA detected" in call for call in warning_calls)
             assert any("CAPTCHA protection activated" in call for call in error_calls)
 
@@ -303,13 +300,14 @@ class TestESBDataUpdateCoordinator:
             error_msg = mock_logger.error.call_args[0][0]
             assert "Network error" in error_msg
 
-    def test_coordinator_different_update_intervals(self, hass, mock_esb_api):
+    def test_coordinator_different_update_intervals(self, hass, mock_esb_api, mock_config_entry):
         """Test coordinator with different update intervals."""
         # Test with different intervals
         coordinator_5min = ESBDataUpdateCoordinator(
             hass=hass,
             esb_api=mock_esb_api,
             mprn="12345678901",
+            config_entry=mock_config_entry,
             update_interval=timedelta(minutes=5),
         )
         assert coordinator_5min.update_interval == timedelta(minutes=5)
@@ -318,22 +316,30 @@ class TestESBDataUpdateCoordinator:
             hass=hass,
             esb_api=mock_esb_api,
             mprn="12345678901",
+            config_entry=mock_config_entry,
             update_interval=timedelta(hours=1),
         )
         assert coordinator_1hour.update_interval == timedelta(hours=1)
 
-    def test_coordinator_different_mprns(self, hass, mock_esb_api):
+    def test_coordinator_different_mprns(self, hass, mock_esb_api, mock_config_entry):
         """Test coordinator with different MPRNs."""
         coordinator1 = ESBDataUpdateCoordinator(
             hass=hass,
             esb_api=mock_esb_api,
             mprn="11111111111",
+            config_entry=mock_config_entry,
             update_interval=timedelta(minutes=30),
         )
+        
+        config_entry2 = Mock()
+        config_entry2.data = mock_config_entry.data.copy()
+        config_entry2.entry_id = "test-entry-id-2"
+        
         coordinator2 = ESBDataUpdateCoordinator(
             hass=hass,
             esb_api=mock_esb_api,
             mprn="22222222222",
+            config_entry=config_entry2,
             update_interval=timedelta(minutes=30),
         )
 

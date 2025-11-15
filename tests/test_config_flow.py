@@ -4,10 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from custom_components.esb_smart_meter.config_flow import \
-    ESBSmartMeterConfigFlow
-from custom_components.esb_smart_meter.const import (CONF_MPRN, CONF_PASSWORD,
-                                                     CONF_USERNAME)
+from custom_components.esb_smart_meter.config_flow import ESBSmartMeterConfigFlow
+from custom_components.esb_smart_meter.const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME
 
 
 class TestConfigFlow:
@@ -40,9 +38,7 @@ class TestConfigFlow:
             CONF_MPRN: "12345678901",
         }
 
-        with patch.object(flow, "async_set_unique_id"), patch.object(
-            flow, "_abort_if_unique_id_configured"
-        ):
+        with patch.object(flow, "async_set_unique_id"), patch.object(flow, "_abort_if_unique_id_configured"):
             result = await flow.async_step_user(user_input=user_input)
 
         assert result["type"] == "create_entry"
@@ -104,9 +100,7 @@ class TestConfigFlow:
             CONF_MPRN: " 12345678901 ",  # With whitespace
         }
 
-        with patch.object(flow, "async_set_unique_id"), patch.object(
-            flow, "_abort_if_unique_id_configured"
-        ):
+        with patch.object(flow, "async_set_unique_id"), patch.object(flow, "_abort_if_unique_id_configured"):
             result = await flow.async_step_user(user_input=user_input)
 
         assert result["type"] == "create_entry"

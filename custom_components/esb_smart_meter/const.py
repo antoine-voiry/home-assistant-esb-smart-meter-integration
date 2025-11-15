@@ -62,10 +62,7 @@ MPRN_LENGTH = 11  # Expected length of MPRN
 
 # API URLs
 ESB_LOGIN_URL = "https://myaccount.esbnetworks.ie/"
-ESB_AUTH_BASE_URL = (
-    "https://login.esbnetworks.ie/esbntwkscustportalprdb2c01.onmicrosoft.com"
-    "/B2C_1A_signup_signin"
-)
+ESB_AUTH_BASE_URL = "https://login.esbnetworks.ie/esbntwkscustportalprdb2c01.onmicrosoft.com" "/B2C_1A_signup_signin"
 ESB_MYACCOUNT_URL = "https://myaccount.esbnetworks.ie"
 ESB_CONSUMPTION_URL = "https://myaccount.esbnetworks.ie/Api/HistoricConsumption"
 ESB_TOKEN_URL = "https://myaccount.esbnetworks.ie/af/t"

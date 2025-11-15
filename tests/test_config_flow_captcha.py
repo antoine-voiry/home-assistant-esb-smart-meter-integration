@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from homeassistant import config_entries
 
 from custom_components.esb_smart_meter.config_flow import (
     ESBSmartMeterConfigFlow,
@@ -15,7 +14,6 @@ from custom_components.esb_smart_meter.const import (
     CONF_PASSWORD,
     CONF_UPDATE_INTERVAL,
     CONF_USERNAME,
-    DOMAIN,
 )
 
 
@@ -101,9 +99,7 @@ class TestOptionsFlow:
         flow = ESBSmartMeterOptionsFlow(mock_config_entry)
         flow.hass = mock_hass
 
-        result = await flow.async_step_manual_cookies(
-            user_input={CONF_MANUAL_COOKIES: ""}
-        )
+        result = await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: ""})
 
         assert result["type"] == "form"
         assert "empty_cookies" in result["errors"].get(CONF_MANUAL_COOKIES, "")
@@ -116,16 +112,12 @@ class TestOptionsFlow:
 
         cookie_string = "session_id=abc123; auth_token=xyz789"
 
-        with patch(
-            "custom_components.esb_smart_meter.config_flow.SessionManager"
-        ) as mock_session_class:
+        with patch("custom_components.esb_smart_meter.config_flow.SessionManager") as mock_session_class:
             mock_session = Mock()
             mock_session.save_manual_cookies = AsyncMock(return_value=True)
             mock_session_class.return_value = mock_session
 
-            result = await flow.async_step_manual_cookies(
-                user_input={CONF_MANUAL_COOKIES: cookie_string}
-            )
+            result = await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: cookie_string})
 
             assert result["type"] == "create_entry"
             mock_session.save_manual_cookies.assert_called_once_with(cookie_string)
@@ -138,16 +130,12 @@ class TestOptionsFlow:
 
         cookie_string = "invalid cookie format"
 
-        with patch(
-            "custom_components.esb_smart_meter.config_flow.SessionManager"
-        ) as mock_session_class:
+        with patch("custom_components.esb_smart_meter.config_flow.SessionManager") as mock_session_class:
             mock_session = Mock()
             mock_session.save_manual_cookies = AsyncMock(return_value=False)
             mock_session_class.return_value = mock_session
 
-            result = await flow.async_step_manual_cookies(
-                user_input={CONF_MANUAL_COOKIES: cookie_string}
-            )
+            result = await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: cookie_string})
 
             assert result["type"] == "form"
             assert "invalid_cookies" in result["errors"].get(CONF_MANUAL_COOKIES, "")
@@ -160,6 +148,6 @@ class TestConfigFlowWithOptions:
         """Test that config flow provides options flow."""
         config_entry = Mock()
         options_flow = ESBSmartMeterConfigFlow.async_get_options_flow(config_entry)
-        
+
         assert isinstance(options_flow, ESBSmartMeterOptionsFlow)
         assert options_flow._config_entry == config_entry

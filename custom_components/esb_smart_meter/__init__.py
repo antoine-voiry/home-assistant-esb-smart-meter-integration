@@ -21,7 +21,7 @@ PLATFORMS: list[str] = ["sensor"]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # pylint: disable=unused-argument
     """Set up the ESB Smart Meter component."""
     hass.data.setdefault(DOMAIN, {})
     return True
@@ -30,17 +30,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up ESB Smart Meter from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    
+
     # Get credentials from config entry
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
     mprn = entry.data[CONF_MPRN]
     update_interval_hours = entry.options.get(CONF_UPDATE_INTERVAL, 24)
     update_interval = timedelta(hours=update_interval_hours)
-    
+
     # Create shared session for this config entry
     session = await create_esb_session(hass)
-    
+
     # Create API client
     esb_api = ESBDataApi(
         hass=hass,
@@ -49,24 +49,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         password=password,
         mprn=mprn,
     )
-    
+
     # Create coordinator
     coordinator = ESBDataUpdateCoordinator(
         hass=hass,
         esb_api=esb_api,
         mprn=mprn,
+        config_entry=entry,
         update_interval=update_interval,
     )
-    
+
     # Fetch initial data
     await coordinator.async_config_entry_first_refresh()
-    
+
     # Store coordinator and session for cleanup
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "session": session,
     }
-    
+
     # Forward setup to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

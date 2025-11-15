@@ -2,10 +2,9 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Tuple, List, Tuple
+from typing import Any, Dict, List, Tuple
 
-from .const import (CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_DATE_FORMAT,
-                    MAX_DATA_AGE_DAYS)
+from .const import CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_DATE_FORMAT, MAX_DATA_AGE_DAYS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,10 +20,7 @@ class ESBData:
                 _LOGGER.error("CSV validation failed. First row keys: %s", list(data[0].keys()))
                 _LOGGER.error("Expected columns: %s, %s", CSV_COLUMN_DATE, CSV_COLUMN_VALUE)
                 _LOGGER.error("First row data: %s", data[0])
-                raise ValueError(
-                    f"Invalid CSV structure. Expected columns: "
-                    f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}"
-                )
+                raise ValueError(f"Invalid CSV structure. Expected columns: " f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}")
 
         # Filter out data older than MAX_DATA_AGE_DAYS to prevent memory leaks
         cutoff_date = datetime.now() - timedelta(days=MAX_DATA_AGE_DAYS)
@@ -41,19 +37,13 @@ class ESBData:
         required_columns = [CSV_COLUMN_DATE, CSV_COLUMN_VALUE]
         available_columns = list(row.keys())
         has_required = all(col in row for col in required_columns)
-        
+
         if not has_required:
-            _LOGGER.error(
-                "CSV validation failed. Required: %s, Available: %s",
-                required_columns,
-                available_columns
-            )
-        
+            _LOGGER.error("CSV validation failed. Required: %s, Available: %s", required_columns, available_columns)
+
         return has_required
 
-    def _filter_and_parse_data(
-        self, data: list[dict[str, Any]], cutoff_date: datetime
-    ) -> list[tuple[datetime, float]]:
+    def _filter_and_parse_data(self, data: list[dict[str, Any]], cutoff_date: datetime) -> list[tuple[datetime, float]]:
         """Filter old data and pre-parse for performance."""
         parsed_data = []
         for row in data:
@@ -74,9 +64,7 @@ class ESBData:
     @property
     def today(self) -> float:
         """Get today's usage."""
-        return self.__sum_data_since(
-            since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        )
+        return self.__sum_data_since(since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0))
 
     @property
     def last_24_hours(self) -> float:
@@ -99,11 +87,7 @@ class ESBData:
     @property
     def this_month(self) -> float:
         """Get this month's usage."""
-        return self.__sum_data_since(
-            since=datetime.now().replace(
-                day=1, hour=0, minute=0, second=0, microsecond=0
-            )
-        )
+        return self.__sum_data_since(since=datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0))
 
     @property
     def last_30_days(self) -> float:

@@ -1,9 +1,21 @@
 """Test configuration and fixtures."""
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+
+def _async_create_task_handler(coro):
+    """Handle async_create_task by closing the coroutine to prevent warnings.
+    
+    This prevents RuntimeWarning about unawaited coroutines in tests.
+    """
+    try:
+        coro.close()
+    except Exception:
+        pass
+    return MagicMock()
 
 
 @pytest.fixture
@@ -12,6 +24,8 @@ def mock_hass():
     hass = MagicMock()
     hass.data = {}
     hass.async_add_executor_job = AsyncMock()
+    # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
+    hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
     return hass
 
 

@@ -14,9 +14,17 @@ from bs4 import BeautifulSoup
 from homeassistant.core import HomeAssistant
 
 from .circuit_breaker import CircuitBreaker
-from .const import (DEFAULT_TIMEOUT, ESB_AUTH_BASE_URL, ESB_CONSUMPTION_URL,
-                    ESB_DOWNLOAD_URL, ESB_LOGIN_URL, ESB_MYACCOUNT_URL,
-                    ESB_TOKEN_URL, MAX_CSV_SIZE_MB, RATE_LIMIT_BACKOFF_MINUTES)
+from .const import (
+    DEFAULT_TIMEOUT,
+    ESB_AUTH_BASE_URL,
+    ESB_CONSUMPTION_URL,
+    ESB_DOWNLOAD_URL,
+    ESB_LOGIN_URL,
+    ESB_MYACCOUNT_URL,
+    ESB_TOKEN_URL,
+    MAX_CSV_SIZE_MB,
+    RATE_LIMIT_BACKOFF_MINUTES,
+)
 from .models import ESBData
 from .session_manager import CaptchaRequiredException, SessionManager
 from .utils import get_human_like_delay, get_random_user_agent
@@ -43,7 +51,7 @@ class ESBDataApi:
         self._password = password
         self._mprn = mprn
         self._timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
-        self._circuit_breaker = CircuitBreaker()
+        self._circuit_breaker = CircuitBreaker(hass=hass, mprn=mprn)
         self._session_manager = SessionManager(hass, mprn)
         self._current_user_agent = None
 
@@ -53,11 +61,11 @@ class ESBDataApi:
         cached_session = await self._session_manager.load_session()
         if cached_session:
             _LOGGER.info("Using cached session, skipping login")
-            
+
             # Validate the session is still working before using it
             cookies = cached_session.get("cookies", {})
             user_agent = cached_session.get("user_agent", "")
-            
+
             if await self._session_manager.validate_session_cookies(cookies, user_agent):
                 _LOGGER.info("Cached session validated successfully")
                 # Load cookies into current session
@@ -70,10 +78,10 @@ class ESBDataApi:
             else:
                 _LOGGER.warning("Cached session validation failed, performing fresh login")
                 await self._session_manager.clear_session()
-        
+
         # No cached session, perform full login
         _LOGGER.info("No valid cached session, performing full login")
-        
+
         # Select a random user agent and use it consistently throughout the session
         user_agent = get_random_user_agent()
         self._current_user_agent = user_agent
@@ -165,16 +173,10 @@ class ESBDataApi:
                 [f"{c.key}" for c in self._session.cookie_jar],
             )
             # Security: Do not log credentials
-            _LOGGER.debug(
-                "Request 2 data: signInName=[REDACTED], password=[REDACTED], request_type=RESPONSE"
-            )
+            _LOGGER.debug("Request 2 data: signInName=[REDACTED], password=[REDACTED], request_type=RESPONSE")
             _LOGGER.debug(
                 "Request 2 headers: %s",
-                {
-                    k: v
-                    for k, v in login_headers.items()
-                    if k.lower() not in ("user-agent", "x-csrf-token")
-                },
+                {k: v for k, v in login_headers.items() if k.lower() not in ("user-agent", "x-csrf-token")},
             )
             async with self._session.post(
                 login_url,
@@ -222,24 +224,17 @@ class ESBDataApi:
                 _LOGGER.debug("Request 3 response URL: %s", response.url)
                 content = await response.text()
                 _LOGGER.debug("Request 3 response length: %d bytes", len(content))
-                _LOGGER.debug(
-                    "Request 3 response preview (first 500 chars): %s", content[:500]
-                )
+                _LOGGER.debug("Request 3 response preview (first 500 chars): %s", content[:500])
 
                 # Check if CAPTCHA is present
                 if (
                     "g-recaptcha-response" in content
                     or "captcha.html" in content
-                    or 'error_requiredFieldMissing":"Please confirm you are not a robot'
-                    in content
+                    or 'error_requiredFieldMissing":"Please confirm you are not a robot' in content
                 ):
                     _LOGGER.error("CAPTCHA detected in ESB response!")
-                    _LOGGER.error(
-                        "ESB Networks requires CAPTCHA verification for login."
-                    )
-                    _LOGGER.error(
-                        "User intervention required - please provide session cookies manually."
-                    )
+                    _LOGGER.error("ESB Networks requires CAPTCHA verification for login.")
+                    _LOGGER.error("User intervention required - please provide session cookies manually.")
                     # Raise custom exception that can be caught and trigger notification
                     raise CaptchaRequiredException(
                         "ESB Networks requires CAPTCHA verification. "
@@ -250,9 +245,7 @@ class ESBDataApi:
                 soup = BeautifulSoup(content, "html.parser")
                 form = soup.find("form", {"id": "auto"})
                 if not form:
-                    _LOGGER.error(
-                        "Could not find form with id='auto'. Looking for any forms..."
-                    )
+                    _LOGGER.error("Could not find form with id='auto'. Looking for any forms...")
                     all_forms = soup.find_all("form")
                     _LOGGER.error("Found %d forms in response", len(all_forms))
                     for idx, f in enumerate(all_forms):
@@ -382,21 +375,17 @@ class ESBDataApi:
                     raise ValueError("Failed to get download token")
                 _LOGGER.debug("Got download token")
 
-            _LOGGER.info(
-                "Authentication completed successfully for user: %s", self._username
-            )
-            
+            _LOGGER.info("Authentication completed successfully for user: %s", self._username)
+
             # Save session for reuse
-            cookies = self._session_manager.extract_cookies_from_jar(
-                self._session.cookie_jar
-            )
+            cookies = self._session_manager.extract_cookies_from_jar(self._session.cookie_jar)
             await self._session_manager.save_session(
                 cookies=cookies,
                 user_agent=user_agent,
                 download_token=download_token,
             )
             _LOGGER.info("Session saved for future reuse")
-            
+
             return {"download_token": download_token, "user_agent": user_agent}
 
         except CaptchaRequiredException:
@@ -451,8 +440,7 @@ class ESBDataApi:
                     size_mb = int(content_length) / (1024 * 1024)
                     if size_mb > MAX_CSV_SIZE_MB:
                         raise ValueError(
-                            f"CSV response too large: {size_mb:.2f}MB "
-                            f"exceeds {MAX_CSV_SIZE_MB}MB limit"
+                            f"CSV response too large: {size_mb:.2f}MB " f"exceeds {MAX_CSV_SIZE_MB}MB limit"
                         )
 
                 csv_data = await response.text()
@@ -461,22 +449,26 @@ class ESBDataApi:
                 actual_size_mb = len(csv_data.encode("utf-8")) / (1024 * 1024)
                 if actual_size_mb > MAX_CSV_SIZE_MB:
                     raise ValueError(
-                        f"CSV data too large: {actual_size_mb:.2f}MB "
-                        f"exceeds {MAX_CSV_SIZE_MB}MB limit"
+                        f"CSV data too large: {actual_size_mb:.2f}MB " f"exceeds {MAX_CSV_SIZE_MB}MB limit"
                     )
 
                 # Check if response looks like HTML instead of CSV
-                if csv_data.strip().startswith('<') and ('<html' in csv_data.lower() or '<!doctype' in csv_data.lower()):
+                if csv_data.strip().startswith("<") and (
+                    "<html" in csv_data.lower() or "<!doctype" in csv_data.lower()
+                ):
                     _LOGGER.error("Received HTML response instead of CSV data")
-                    _LOGGER.error("HTML preview: %s", csv_data[:500].replace('\n', '\\n').replace('\r', '\\r'))
+                    _LOGGER.error("HTML preview: %s", csv_data[:500].replace("\n", "\\n").replace("\r", "\\r"))
                     raise ValueError("Received HTML response instead of expected CSV data")
 
                 # Check if CSV data appears truncated (should end with newline and have reasonable size)
-                if not csv_data.endswith('\n') and len(csv_data) > 1000:
+                if not csv_data.endswith("\n") and len(csv_data) > 1000:
                     _LOGGER.warning("CSV data may be truncated - does not end with newline")
-                if actual_size_mb < 0.1 and len(csv_data.split('\n')) < 100:
-                    _LOGGER.warning("CSV data appears very small (%d bytes, %d lines) - may be truncated or empty",
-                                  len(csv_data), len(csv_data.split('\n')))
+                if actual_size_mb < 0.1 and len(csv_data.split("\n")) < 100:
+                    _LOGGER.warning(
+                        "CSV data appears very small (%d bytes, %d lines) - may be truncated or empty",
+                        len(csv_data),
+                        len(csv_data.split("\n")),
+                    )
 
                 _LOGGER.debug("CSV data fetched successfully (%.2f MB)", actual_size_mb)
                 return csv_data
@@ -496,17 +488,18 @@ class ESBDataApi:
                 _LOGGER.debug("First data row: %s", data[0])
             else:
                 _LOGGER.warning("CSV parsing resulted in no data rows")
-            
+
             # Check for suspiciously small datasets (may indicate truncated download)
             if len(data) < 1000 and len(csv_data) > 10000:
-                _LOGGER.warning("Parsed only %d rows from %d bytes of CSV data - may be truncated", 
-                              len(data), len(csv_data))
-            
+                _LOGGER.warning(
+                    "Parsed only %d rows from %d bytes of CSV data - may be truncated", len(data), len(csv_data)
+                )
+
             return data
         except Exception as err:
             _LOGGER.error("Error parsing CSV data: %s", err)
             # Log first 500 characters of CSV data for debugging
-            csv_preview = csv_data[:500].replace('\n', '\\n').replace('\r', '\\r')
+            csv_preview = csv_data[:500].replace("\n", "\\n").replace("\r", "\\r")
             _LOGGER.error("CSV data preview: %s", csv_preview)
             raise
 
@@ -529,13 +522,9 @@ class ESBDataApi:
             user_agent = auth_result.get("user_agent")
 
             if not download_token:
-                raise ValueError(
-                    "Authentication succeeded but no download token received"
-                )
+                raise ValueError("Authentication succeeded but no download token received")
 
-            _LOGGER.debug(
-                "Proceeding with data download after successful authentication"
-            )
+            _LOGGER.debug("Proceeding with data download after successful authentication")
             csv_data = await self.__fetch_data(download_token, user_agent)
             data = await self._hass.async_add_executor_job(self.__csv_to_dict, csv_data)
 

@@ -1,14 +1,15 @@
 """Tests for CircuitBreaker functionality including security and corner cases."""
 
-import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch
+
+import pytest
 
 from custom_components.esb_smart_meter.circuit_breaker import CircuitBreaker
 from custom_components.esb_smart_meter.const import (
     CIRCUIT_BREAKER_FAILURES,
-    CIRCUIT_BREAKER_TIMEOUT,
     CIRCUIT_BREAKER_MAX_TIMEOUT,
+    CIRCUIT_BREAKER_TIMEOUT,
     MAX_AUTH_ATTEMPTS_PER_DAY,
 )
 
@@ -72,9 +73,7 @@ class TestCircuitBreaker:
         assert circuit_breaker.can_attempt() is False
 
         # Mock time to simulate backoff period passing
-        backoff_time = CIRCUIT_BREAKER_TIMEOUT * (
-            2 ** (CIRCUIT_BREAKER_FAILURES - 1)
-        )
+        backoff_time = CIRCUIT_BREAKER_TIMEOUT * (2 ** (CIRCUIT_BREAKER_FAILURES - 1))
         future_time = datetime.now() + timedelta(seconds=backoff_time + 1)
 
         with patch("custom_components.esb_smart_meter.circuit_breaker.datetime") as mock_datetime:

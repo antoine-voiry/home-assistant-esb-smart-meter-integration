@@ -13,15 +13,16 @@ from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.sensor import (
     ApiStatusSensor,
     DataAgeSensor,
+    Last7DaysSensor,
     Last24HoursSensor,
     Last30DaysSensor,
-    Last7DaysSensor,
     LastUpdateSensor,
     ThisMonthSensor,
     ThisWeekSensor,
     TodaySensor,
     async_setup_entry,
 )
+from tests.conftest import _async_create_task_handler
 
 
 class TestAsyncSetupEntry:
@@ -42,17 +43,27 @@ class TestAsyncSetupEntry:
             ]
         )
         coordinator.mprn = "12345678901"
+        # Mock esb_api and circuit breaker to prevent RuntimeWarnings
+        coordinator.esb_api = MagicMock()
+        mock_circuit_breaker = MagicMock()
+        mock_circuit_breaker._is_open = False
+        mock_circuit_breaker._failure_count = 0
+        mock_circuit_breaker._daily_attempts = 0
+        mock_circuit_breaker._last_failure_time = None
+        mock_circuit_breaker.can_attempt.return_value = True
+        coordinator.esb_api._circuit_breaker = mock_circuit_breaker
+        # Mock hass on esb_api to prevent async task creation
+        coordinator.esb_api._hass = MagicMock()
+        coordinator.esb_api._hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return coordinator
 
     @pytest.fixture
     def mock_hass(self, mock_coordinator):
         """Create mock Home Assistant instance."""
         hass = MagicMock(spec=HomeAssistant)
-        hass.data = {
-            DOMAIN: {
-                "test_entry_id": {"coordinator": mock_coordinator}
-            }
-        }
+        hass.data = {DOMAIN: {"test_entry_id": {"coordinator": mock_coordinator}}}
+        # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
+        hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
@@ -63,18 +74,16 @@ class TestAsyncSetupEntry:
         return entry
 
     @pytest.mark.asyncio
-    async def test_setup_entry_creates_all_sensors(
-        self, mock_hass, mock_config_entry
-    ):
-        """Test that setup_entry creates all 9 sensors."""
+    async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
+        """Test that setup_entry creates all 10 sensors (including circuit breaker)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # Verify 9 sensors were created
+        # Verify 10 sensors were created (6 data + 4 diagnostic sensors)
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 9
+        assert len(sensors) == 10
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -300,3 +309,135 @@ class TestLast30DaysSensor:
 
         result = sensor._get_data(esb_data=esb_data)
         assert result == 520.6
+
+
+class TestLastUpdateSensor:
+    """Test LastUpdateSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test Last Update sensor unique ID."""
+        sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_last_update"
+
+    def test_native_value_none(self, mock_coordinator):
+        """Test Last Update sensor returns None when last_update_success is None."""
+        mock_coordinator.last_update_success = None
+        sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value is None
+
+    def test_native_value_bool(self, mock_coordinator):
+        """Test Last Update sensor returns None when last_update_success is a bool."""
+        mock_coordinator.last_update_success = True
+        sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value is None
+
+    def test_native_value_datetime(self, mock_coordinator):
+        """Test Last Update sensor returns isoformat when last_update_success is datetime."""
+        from datetime import datetime, timezone
+
+        test_time = datetime(2024, 12, 31, 12, 30, 0, tzinfo=timezone.utc)
+        mock_coordinator.last_update_success = test_time
+        sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value == test_time.isoformat()
+
+
+class TestApiStatusSensor:
+    """Test ApiStatusSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test API Status sensor unique ID."""
+        sensor = ApiStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_api_status"
+
+    def test_native_value_unknown_when_none(self, mock_coordinator):
+        """Test API Status sensor returns unknown when last_update_success is None."""
+        mock_coordinator.last_update_success = None
+        sensor = ApiStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value == "unknown"
+
+    def test_native_value_error_when_no_data(self, mock_coordinator):
+        """Test API Status sensor returns error when coordinator has no data."""
+        from datetime import datetime, timezone
+
+        mock_coordinator.last_update_success = datetime.now(timezone.utc)
+        mock_coordinator.data = None
+        sensor = ApiStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value == "error"
+
+    def test_native_value_online_when_has_data(self, mock_coordinator):
+        """Test API Status sensor returns online when coordinator has data."""
+        from datetime import datetime, timezone
+
+        mock_coordinator.last_update_success = datetime.now(timezone.utc)
+        mock_coordinator.data = MagicMock()
+        sensor = ApiStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value == "online"
+
+
+class TestDataAgeSensor:
+    """Test DataAgeSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test Data Age sensor unique ID."""
+        sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_data_age"
+
+    def test_native_value_none(self, mock_coordinator):
+        """Test Data Age sensor returns None when last_update_success is None."""
+        mock_coordinator.last_update_success = None
+        sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value is None
+
+    def test_native_value_bool(self, mock_coordinator):
+        """Test Data Age sensor returns None when last_update_success is a bool."""
+        mock_coordinator.last_update_success = False
+        sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor.native_value is None
+
+    def test_native_value_calculates_age(self, mock_coordinator):
+        """Test Data Age sensor calculates age correctly."""
+        from datetime import datetime, timedelta, timezone
+
+        # Set last update to 2 hours ago
+        test_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        mock_coordinator.last_update_success = test_time
+        sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        age = sensor.native_value
+        assert age is not None
+        # Should be approximately 2 hours
+        assert 1.9 < age < 2.1
+
+    def test_native_unit_of_measurement(self, mock_coordinator):
+        """Test Data Age sensor has correct unit."""
+        sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        from homeassistant.const import UnitOfTime
+
+        assert sensor._attr_native_unit_of_measurement == UnitOfTime.HOURS

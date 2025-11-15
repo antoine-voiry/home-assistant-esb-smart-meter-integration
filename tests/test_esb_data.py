@@ -48,9 +48,7 @@ class TestESBData:
                 "Read Value": "2.5",
             },
             {
-                "Read Date and End Time": (today_start + timedelta(hours=1)).strftime(
-                    "%d-%m-%Y %H:%M"
-                ),
+                "Read Date and End Time": (today_start + timedelta(hours=1)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "3.0",
             },
         ]
@@ -64,15 +62,11 @@ class TestESBData:
 
         data = [
             {
-                "Read Date and End Time": (now - timedelta(hours=23)).strftime(
-                    "%d-%m-%Y %H:%M"
-                ),
+                "Read Date and End Time": (now - timedelta(hours=23)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "1.0",
             },
             {
-                "Read Date and End Time": (now - timedelta(hours=25)).strftime(
-                    "%d-%m-%Y %H:%M"
-                ),
+                "Read Date and End Time": (now - timedelta(hours=25)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "2.0",  # Should not be included
             },
         ]
@@ -83,9 +77,7 @@ class TestESBData:
     def test_esb_data_this_week(self):
         """Test this week's data calculation."""
         now = datetime.now()
-        week_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
-            days=now.weekday()
-        )
+        week_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=now.weekday())
 
         data = [
             {
@@ -93,9 +85,7 @@ class TestESBData:
                 "Read Value": "5.0",
             },
             {
-                "Read Date and End Time": (week_start + timedelta(days=1)).strftime(
-                    "%d-%m-%Y %H:%M"
-                ),
+                "Read Date and End Time": (week_start + timedelta(days=1)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "3.0",
             },
         ]
@@ -111,9 +101,7 @@ class TestESBData:
         for i in range(7):
             data.append(
                 {
-                    "Read Date and End Time": (now - timedelta(days=i)).strftime(
-                        "%d-%m-%Y %H:%M"
-                    ),
+                    "Read Date and End Time": (now - timedelta(days=i)).strftime("%d-%m-%Y %H:%M"),
                     "Read Value": "1.0",
                 }
             )
@@ -132,9 +120,7 @@ class TestESBData:
                 "Read Value": "10.0",
             },
             {
-                "Read Date and End Time": (month_start + timedelta(days=5)).strftime(
-                    "%d-%m-%Y %H:%M"
-                ),
+                "Read Date and End Time": (month_start + timedelta(days=5)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "5.0",
             },
         ]
@@ -150,9 +136,7 @@ class TestESBData:
         for i in range(30):
             data.append(
                 {
-                    "Read Date and End Time": (now - timedelta(days=i)).strftime(
-                        "%d-%m-%Y %H:%M"
-                    ),
+                    "Read Date and End Time": (now - timedelta(days=i)).strftime("%d-%m-%Y %H:%M"),
                     "Read Value": "2.0",
                 }
             )
@@ -179,15 +163,11 @@ class TestESBData:
 
         data = [
             {
-                "Read Date and End Time": (now - timedelta(days=95)).strftime(
-                    "%d-%m-%Y %H:%M"
-                ),
+                "Read Date and End Time": (now - timedelta(days=95)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "1.0",
             },
             {
-                "Read Date and End Time": (now - timedelta(days=50)).strftime(
-                    "%d-%m-%Y %H:%M"
-                ),
+                "Read Date and End Time": (now - timedelta(days=50)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "2.0",
             },
         ]
