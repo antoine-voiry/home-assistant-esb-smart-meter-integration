@@ -326,25 +326,18 @@ class TestLastUpdateSensor:
         assert sensor._attr_unique_id == "12345678901_last_update"
 
     def test_native_value_none(self, mock_coordinator):
-        """Test Last Update sensor returns None when last_update_success is None."""
-        mock_coordinator.last_update_success = None
-        sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
-
-        assert sensor.native_value is None
-
-    def test_native_value_bool(self, mock_coordinator):
-        """Test Last Update sensor returns None when last_update_success is a bool."""
-        mock_coordinator.last_update_success = True
+        """Test Last Update sensor returns None when last_successful_update_time is None."""
+        mock_coordinator.last_successful_update_time = None
         sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor.native_value is None
 
     def test_native_value_datetime(self, mock_coordinator):
-        """Test Last Update sensor returns isoformat when last_update_success is datetime."""
+        """Test Last Update sensor returns isoformat when last_successful_update_time is datetime."""
         from datetime import datetime, timezone
 
         test_time = datetime(2024, 12, 31, 12, 30, 0, tzinfo=timezone.utc)
-        mock_coordinator.last_update_success = test_time
+        mock_coordinator.last_successful_update_time = test_time
         sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor.native_value == test_time.isoformat()
@@ -407,15 +400,8 @@ class TestDataAgeSensor:
         assert sensor._attr_unique_id == "12345678901_data_age"
 
     def test_native_value_none(self, mock_coordinator):
-        """Test Data Age sensor returns None when last_update_success is None."""
-        mock_coordinator.last_update_success = None
-        sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
-
-        assert sensor.native_value is None
-
-    def test_native_value_bool(self, mock_coordinator):
-        """Test Data Age sensor returns None when last_update_success is a bool."""
-        mock_coordinator.last_update_success = False
+        """Test Data Age sensor returns None when last_successful_update_time is None."""
+        mock_coordinator.last_successful_update_time = None
         sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert sensor.native_value is None
@@ -426,7 +412,7 @@ class TestDataAgeSensor:
 
         # Set last update to 2 hours ago
         test_time = datetime.now(timezone.utc) - timedelta(hours=2)
-        mock_coordinator.last_update_success = test_time
+        mock_coordinator.last_successful_update_time = test_time
         sensor = DataAgeSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         age = sensor.native_value
