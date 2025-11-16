@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -56,6 +56,7 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         self.mprn = mprn
         self.config_entry = config_entry
         self._captcha_notification_sent = False
+        self.last_successful_update_time: datetime | None = None
 
     async def _async_update_data(self) -> ESBData:
         """
@@ -99,6 +100,9 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
                 esb_data.today,
                 esb_data.last_30_days,
             )
+
+            # Update the last successful update time
+            self.last_successful_update_time = datetime.now(timezone.utc)
 
             return esb_data
 

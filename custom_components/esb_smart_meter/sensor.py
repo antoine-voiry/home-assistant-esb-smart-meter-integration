@@ -231,12 +231,9 @@ class LastUpdateSensor(SensorEntity):
     @property
     def native_value(self) -> str | None:
         """Return the timestamp of the last successful update."""
-        if self.coordinator.last_update_success is None:
+        if self.coordinator.last_successful_update_time is None:
             return None
-        # last_update_success can be a bool initially, check if it's a datetime
-        if not isinstance(self.coordinator.last_update_success, datetime):
-            return None
-        return self.coordinator.last_update_success.isoformat()
+        return self.coordinator.last_successful_update_time.isoformat()
 
 
 class ApiStatusSensor(SensorEntity):
@@ -320,13 +317,10 @@ class DataAgeSensor(SensorEntity):
     @property
     def native_value(self) -> float | None:
         """Return the age of the data in hours."""
-        if self.coordinator.last_update_success is None:
-            return None
-        # last_update_success can be a bool initially, check if it's a datetime
-        if not isinstance(self.coordinator.last_update_success, datetime):
+        if self.coordinator.last_successful_update_time is None:
             return None
 
-        age = datetime.now(timezone.utc) - self.coordinator.last_update_success
+        age = datetime.now(timezone.utc) - self.coordinator.last_successful_update_time
         return round(age.total_seconds() / 3600, 1)  # Hours with 1 decimal place
 
 
