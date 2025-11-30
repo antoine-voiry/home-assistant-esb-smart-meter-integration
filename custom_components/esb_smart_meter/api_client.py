@@ -243,6 +243,7 @@ class ESBDataApi:
                     )
 
                 soup = BeautifulSoup(content, "html.parser")
+
                 form = soup.find("form", {"id": "auto"})
                 if not form:
                     _LOGGER.error("Could not find form with id='auto'. Looking for any forms...")
@@ -256,14 +257,21 @@ class ESBDataApi:
                             f.get("action"),
                         )
                     _LOGGER.debug("Full HTML response:\n%s", content)
-                    raise ValueError("Could not find auto-submit form in ESB response")
+                    # Defensive: raise clear error and do not proceed
+                    raise ValueError("Could not find auto-submit form in ESB response (form is None)")
+
+                # Defensive: check again before accessing form fields
+                if form is None:
+                    _LOGGER.error("Form is None before extracting fields. This should not happen.")
+                    raise ValueError("Form is None before extracting fields.")
 
                 # Extract form fields
-                state_input = form.find("input", {"name": "state"})
-                client_info_input = form.find("input", {"name": "client_info"})
-                code_input = form.find("input", {"name": "code"})
+                state_input = form.find("input", {"name": "state"}) if form else None
+                client_info_input = form.find("input", {"name": "client_info"}) if form else None
+                code_input = form.find("input", {"name": "code"}) if form else None
 
                 if not state_input or not client_info_input or not code_input:
+                    _LOGGER.error("Missing required form fields in ESB response. state_input: %s, client_info_input: %s, code_input: %s", state_input, client_info_input, code_input)
                     raise ValueError("Missing required form fields in ESB response")
 
                 state = state_input.get("value")
@@ -272,6 +280,7 @@ class ESBDataApi:
                 action_url = form.get("action")
 
                 if not all([state, client_info, code, action_url]):
+                    _LOGGER.error("Empty values in required form fields. state: %s, client_info: %s, code: %s, action_url: %s", state, client_info, code, action_url)
                     raise ValueError("Empty values in required form fields")
 
                 _LOGGER.debug("Extracted form data")
