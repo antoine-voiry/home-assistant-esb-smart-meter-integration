@@ -32,8 +32,8 @@ We only provide security updates for actively maintained versions of this integr
 
 | Integration Version | Home Assistant Version Support | Status |
 | :--- | :--- | :--- |
-| **`[Your Latest Version]`** | **Current Stable HA Version** | **Actively Maintained** |
-| `[Your Previous Version]` | Previous Stable HA Version | **Limited Support (Critical fixes only)** |
+| **`v1.3.5`** | **`2023.1.0` or later** | **Actively Maintained** |
+| `v1.3.3` | `2023.1.0` or later | **Limited Support (Critical fixes only)** |
 | Older Versions | All other HA Versions | **Not Supported** |
 
 > **Action Required:** Please update the table above with your actual version numbers (e.g., `v1.2.0`, `v1.1.0`) and the corresponding Home Assistant versions they support.

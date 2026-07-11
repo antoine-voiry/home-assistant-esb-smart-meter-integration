@@ -199,3 +199,29 @@ class TestESBData:
         # Should only have the valid row
         assert len(esb_data._data) == 1
         assert esb_data.today == 5.0
+
+    def test_get_readings_since(self):
+        """Test get_readings_since returns correct dictionary list."""
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        data = [
+            {
+                "Read Date and End Time": now.strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "5.0",
+            },
+            {
+                "Read Date and End Time": (now - timedelta(hours=1)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "3.0",
+            },
+            {
+                "Read Date and End Time": (now - timedelta(days=2)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "1.0",
+            },
+        ]
+        esb_data = ESBData(data=data)
+        
+        # Readings since 12 hours ago
+        readings = esb_data.get_readings_since(since=now - timedelta(hours=12))
+        assert len(readings) == 2
+        assert readings[0]["value"] == 5.0
+        assert readings[1]["value"] == 3.0

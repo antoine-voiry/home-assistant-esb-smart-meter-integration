@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from homeassistant.util import dt as dt_util
@@ -417,6 +417,70 @@ class TestSessionManager:
             # Should not raise
             session_manager = SessionManager(mock_hass, "12345678901")
             assert session_manager._mprn == "12345678901"
+
+    @pytest.mark.asyncio
+    async def test_validate_session_cookies_success(self, mock_hass):
+        """Test validate_session_cookies returns True on 200 response."""
+        session_manager = SessionManager(mock_hass, "12345678901")
+
+        # Mock session.get response
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+        mock_session.close = AsyncMock()
+        mock_session.cookie_jar = MagicMock()
+
+        with patch("custom_components.esb_smart_meter.session_manager.aiohttp.ClientSession", return_value=mock_session):
+            res = await session_manager.validate_session_cookies(
+                {"test_cookie": "value"},
+                "Mozilla/5.0"
+            )
+            assert res is True
+            mock_session.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_session_cookies_failure(self, mock_hass):
+        """Test validate_session_cookies returns False on redirect status (e.g. 302)."""
+        session_manager = SessionManager(mock_hass, "12345678901")
+
+        mock_response = MagicMock()
+        mock_response.status = 302
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+        mock_session.close = AsyncMock()
+        mock_session.cookie_jar = MagicMock()
+
+        with patch("custom_components.esb_smart_meter.session_manager.aiohttp.ClientSession", return_value=mock_session):
+            res = await session_manager.validate_session_cookies(
+                {"test_cookie": "value"},
+                "Mozilla/5.0"
+            )
+            assert res is False
+            mock_session.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_session_cookies_exception(self, mock_hass):
+        """Test validate_session_cookies handles exceptions gracefully."""
+        session_manager = SessionManager(mock_hass, "12345678901")
+
+        mock_session = MagicMock()
+        mock_session.get.side_effect = Exception("Network error")
+        mock_session.close = AsyncMock()
+
+        with patch("custom_components.esb_smart_meter.session_manager.aiohttp.ClientSession", return_value=mock_session):
+            res = await session_manager.validate_session_cookies(
+                {"test_cookie": "value"},
+                "Mozilla/5.0"
+            )
+            assert res is False
+            mock_session.close.assert_awaited_once()
 
 
 class TestCaptchaRequiredException:

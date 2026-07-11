@@ -1,5 +1,6 @@
 """Integration tests for sensor.py with coordinator pattern."""
 
+from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,6 +13,7 @@ from custom_components.esb_smart_meter.const import DOMAIN
 from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.sensor import (
     ApiStatusSensor,
+    CircuitBreakerStatusSensor,
     DataAgeSensor,
     Last7DaysSensor,
     Last24HoursSensor,
@@ -35,7 +37,7 @@ class TestAsyncSetupEntry:
         coordinator.data = ESBData(
             data=[
                 {
-                    "Read Date and End Time": "31-12-2024 00:30",
+                    "Read Date and End Time": datetime.now().strftime("%d-%m-%Y %H:%M"),
                     "Read Value": "1.5",
                     "Read Type": "Active Import",
                     "MPRN": "12345678901",
@@ -96,8 +98,7 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[6], LastUpdateSensor)
         assert isinstance(sensors[7], ApiStatusSensor)
         assert isinstance(sensors[8], DataAgeSensor)
-        assert isinstance(sensors[4], ThisMonthSensor)
-        assert isinstance(sensors[5], Last30DaysSensor)
+        assert isinstance(sensors[9], CircuitBreakerStatusSensor)
 
 
 class TestBaseSensor:
@@ -110,7 +111,7 @@ class TestBaseSensor:
         coordinator.data = ESBData(
             data=[
                 {
-                    "Read Date and End Time": "31-12-2024 00:30",
+                    "Read Date and End Time": datetime.now().strftime("%d-%m-%Y %H:%M"),
                     "Read Value": "1.5",
                     "Read Type": "Active Import",
                     "MPRN": "12345678901",
@@ -137,6 +138,21 @@ class TestBaseSensor:
         value = sensor.native_value
 
         assert value is None
+
+    def test_sensor_extra_state_attributes(self, mock_coordinator):
+        """Test sensor extra state attributes contain readings."""
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
+        attrs = sensor.extra_state_attributes
+        assert attrs is not None
+        assert "readings" in attrs
+        assert len(attrs["readings"]) > 0
+
+    def test_sensor_extra_state_attributes_no_data(self):
+        """Test extra state attributes return None when no data."""
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.data = None
+        sensor = TodaySensor(coordinator=coordinator, mprn="12345678901")
+        assert sensor.extra_state_attributes is None
 
     def test_sensor_device_info(self, mock_coordinator):
         """Test sensor device info."""
@@ -185,6 +201,13 @@ class TestTodaySensor:
         result = sensor._get_data(esb_data=esb_data)
         assert result == 15.5
 
+    def test_get_readings(self, mock_coordinator):
+        """Test Today sensor get_readings calls model."""
+        sensor = TodaySensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
 
 class TestLast24HoursSensor:
     """Test Last24HoursSensor class."""
@@ -209,6 +232,13 @@ class TestLast24HoursSensor:
 
         result = sensor._get_data(esb_data=esb_data)
         assert result == 25.3
+
+    def test_get_readings(self, mock_coordinator):
+        """Test Last 24 Hours sensor get_readings calls model."""
+        sensor = Last24HoursSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
 
 
 class TestThisWeekSensor:
@@ -235,6 +265,13 @@ class TestThisWeekSensor:
         result = sensor._get_data(esb_data=esb_data)
         assert result == 85.7
 
+    def test_get_readings(self, mock_coordinator):
+        """Test This Week sensor get_readings calls model."""
+        sensor = ThisWeekSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
 
 class TestLast7DaysSensor:
     """Test Last7DaysSensor class."""
@@ -259,6 +296,13 @@ class TestLast7DaysSensor:
 
         result = sensor._get_data(esb_data=esb_data)
         assert result == 175.2
+
+    def test_get_readings(self, mock_coordinator):
+        """Test Last 7 Days sensor get_readings calls model."""
+        sensor = Last7DaysSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
 
 
 class TestThisMonthSensor:
@@ -285,6 +329,13 @@ class TestThisMonthSensor:
         result = sensor._get_data(esb_data=esb_data)
         assert result == 450.8
 
+    def test_get_readings(self, mock_coordinator):
+        """Test This Month sensor get_readings calls model."""
+        sensor = ThisMonthSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
 
 class TestLast30DaysSensor:
     """Test Last30DaysSensor class."""
@@ -309,6 +360,13 @@ class TestLast30DaysSensor:
 
         result = sensor._get_data(esb_data=esb_data)
         assert result == 520.6
+
+    def test_get_readings(self, mock_coordinator):
+        """Test Last 30 Days sensor get_readings calls model."""
+        sensor = Last30DaysSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
 
 
 class TestLastUpdateSensor:
@@ -427,3 +485,82 @@ class TestDataAgeSensor:
         from homeassistant.const import UnitOfTime
 
         assert sensor._attr_native_unit_of_measurement == UnitOfTime.HOURS
+
+
+class TestCircuitBreakerStatusSensor:
+    """Test CircuitBreakerStatusSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator with circuit breaker."""
+        coordinator = MagicMock()
+        coordinator.mprn = "12345678901"
+        cb = MagicMock()
+        cb._is_open = False
+        cb._failure_count = 0
+        cb._daily_attempts = 0
+        cb._daily_attempts_reset_time = None
+        cb._last_failure_time = None
+        coordinator.esb_api._circuit_breaker = cb
+        return coordinator
+
+    def test_sensor_init(self, mock_coordinator):
+        """Test initialization."""
+        sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+        assert sensor._attr_name == "ESB Smart Meter: Circuit Breaker Status"
+        assert sensor._attr_unique_id == "12345678901_circuit_breaker_status"
+
+    def test_native_value_closed(self, mock_coordinator):
+        """Test value when closed."""
+        sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+        assert sensor.native_value == "closed"
+        assert sensor.icon == "mdi:check-circle"
+
+    def test_native_value_unknown(self, mock_coordinator):
+        """Test value when cb has no attributes."""
+        del mock_coordinator.esb_api._circuit_breaker._is_open
+        sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+        assert sensor.native_value == "unknown"
+        assert sensor.icon == "mdi:help-circle"
+
+    def test_native_value_open(self, mock_coordinator):
+        """Test value when open."""
+        from datetime import datetime
+        cb = mock_coordinator.esb_api._circuit_breaker
+        cb._is_open = True
+        cb._last_failure_time = datetime.now()
+        cb._failure_count = 1
+        sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+        assert sensor.native_value == "open"
+        assert sensor.icon == "mdi:alert-circle"
+
+    def test_native_value_half_open(self, mock_coordinator):
+        """Test value when half-open."""
+        from datetime import datetime, timedelta
+        cb = mock_coordinator.esb_api._circuit_breaker
+        cb._is_open = True
+        cb._last_failure_time = datetime.now() - timedelta(hours=1)
+        cb._failure_count = 1
+        sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+        assert sensor.native_value == "half_open"
+        assert sensor.icon == "mdi:refresh-circle"
+
+    def test_extra_state_attributes(self, mock_coordinator):
+        """Test extra state attributes."""
+        from datetime import datetime
+        cb = mock_coordinator.esb_api._circuit_breaker
+        cb._is_open = True
+        cb._last_failure_time = datetime.now()
+        cb._daily_attempts_reset_time = datetime.now()
+        sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+        attrs = sensor.extra_state_attributes
+        assert attrs["failure_count"] == 0
+        assert attrs["daily_attempts"] == 0
+        assert "backoff_seconds" in attrs
+        assert "blocked_until" in attrs
+
+    def test_extra_state_attributes_no_attrs(self, mock_coordinator):
+        """Test extra state attributes when cb has no attributes."""
+        del mock_coordinator.esb_api._circuit_breaker._failure_count
+        sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
+        assert sensor.extra_state_attributes == {}

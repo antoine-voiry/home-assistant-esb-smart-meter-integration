@@ -61,6 +61,16 @@ class ESBData:
         """Sum energy usage since a specific datetime (optimized)."""
         return sum(value for timestamp, value in self._data if timestamp >= since)
 
+    def get_readings_since(self, *, since: datetime) -> list[dict[str, Any]]:
+        """Get energy usage readings since a specific datetime."""
+        if since.tzinfo is not None:
+            since = since.replace(tzinfo=None)
+        return [
+            {"timestamp": timestamp.isoformat(), "value": value}
+            for timestamp, value in self._data
+            if timestamp >= since
+        ]
+
     @property
     def today(self) -> float:
         """Get today's usage."""

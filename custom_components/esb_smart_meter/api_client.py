@@ -193,7 +193,19 @@ class ESBDataApi:
                 response.raise_for_status()
                 login_response = await response.text()
                 _LOGGER.debug("Request 2 response preview: %s", login_response[:500])
-                _LOGGER.debug("Login successful")
+                
+                # Check for login errors inside HTTP 200 response
+                try:
+                    res_json = json.loads(login_response)
+                    if res_json.get("status") == "400" or "errorCode" in res_json:
+                        error_msg = res_json.get("message", "The email or password is not correct.")
+                        _LOGGER.error("Authentication failed: %s", error_msg)
+                        raise ValueError(f"Authentication failed: {error_msg}")
+                except json.JSONDecodeError:
+                    # Mocks or legacy responses may return non-JSON, skip checking
+                    pass
+
+                _LOGGER.debug("Login credentials accepted, continuing authentication flow")
 
             # REQUEST 3: GET CombinedSigninAndSignup/confirmed
             confirm_params = {

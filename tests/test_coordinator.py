@@ -24,11 +24,14 @@ def mock_esb_api():
 @pytest.fixture
 def mock_esb_data():
     """Create mock ESB data."""
+    from datetime import datetime
+    now = datetime.now()
+    date_str = now.strftime("%d-%m-%Y %H:%M")
     return ESBData(
         data=[
-            {"Read Date and End Time": "10-11-2025 00:30", "Read Value": "0.5"},
-            {"Read Date and End Time": "10-11-2025 01:00", "Read Value": "0.6"},
-            {"Read Date and End Time": "09-11-2025 23:30", "Read Value": "0.4"},
+            {"Read Date and End Time": date_str, "Read Value": "0.5"},
+            {"Read Date and End Time": date_str, "Read Value": "0.6"},
+            {"Read Date and End Time": date_str, "Read Value": "0.4"},
         ]
     )
 

@@ -2,6 +2,7 @@
 
 import logging
 from abc import abstractmethod
+from typing import Any
 from datetime import datetime, timezone
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -84,12 +85,25 @@ class BaseSensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):
     def _get_data(self, *, esb_data: ESBData) -> float:
         """Get the data for this sensor from coordinator data."""
 
+    @abstractmethod
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get the readings for this sensor from coordinator data."""
+
     @property
     def native_value(self) -> float | None:
         """Return the state of the sensor."""
         if self.coordinator.data is None:
             return None
         return self._get_data(esb_data=self.coordinator.data)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the state attributes."""
+        if self.coordinator.data is None:
+            return None
+        return {
+            "readings": self._get_readings(esb_data=self.coordinator.data)
+        }
 
 
 class TodaySensor(BaseSensor):
@@ -108,6 +122,11 @@ class TodaySensor(BaseSensor):
         """Get today's data."""
         return esb_data.today
 
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get today's readings."""
+        from datetime import datetime
+        return esb_data.get_readings_since(since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0))
+
 
 class Last24HoursSensor(BaseSensor):
     """Sensor for last 24 hours electricity usage."""
@@ -124,6 +143,11 @@ class Last24HoursSensor(BaseSensor):
     def _get_data(self, *, esb_data: ESBData) -> float:
         """Get last 24 hours data."""
         return esb_data.last_24_hours
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get last 24 hours readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(since=datetime.now() - timedelta(days=1))
 
 
 class ThisWeekSensor(BaseSensor):
@@ -142,6 +166,14 @@ class ThisWeekSensor(BaseSensor):
         """Get this week's data."""
         return esb_data.this_week
 
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get this week's readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(
+            since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=datetime.now().weekday())
+        )
+
 
 class Last7DaysSensor(BaseSensor):
     """Sensor for last 7 days electricity usage."""
@@ -158,6 +190,11 @@ class Last7DaysSensor(BaseSensor):
     def _get_data(self, *, esb_data: ESBData) -> float:
         """Get last 7 days data."""
         return esb_data.last_7_days
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get last 7 days readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(since=datetime.now() - timedelta(days=7))
 
 
 class ThisMonthSensor(BaseSensor):
@@ -176,6 +213,11 @@ class ThisMonthSensor(BaseSensor):
         """Get this month's data."""
         return esb_data.this_month
 
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get this month's readings."""
+        from datetime import datetime
+        return esb_data.get_readings_since(since=datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+
 
 class Last30DaysSensor(BaseSensor):
     """Sensor for last 30 days electricity usage."""
@@ -192,6 +234,11 @@ class Last30DaysSensor(BaseSensor):
     def _get_data(self, *, esb_data: ESBData) -> float:
         """Get last 30 days data."""
         return esb_data.last_30_days
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get last 30 days readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(since=datetime.now() - timedelta(days=30))
 
 
 class LastUpdateSensor(SensorEntity):

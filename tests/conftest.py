@@ -1,7 +1,7 @@
 """Test configuration and fixtures."""
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -91,3 +91,11 @@ def mock_config_entry():
     }
     entry.entry_id = "test-entry-id"
     return entry
+
+
+@pytest.fixture(autouse=True)
+def mock_asyncio_sleep():
+    """Mock asyncio.sleep globally to avoid waiting during tests."""
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        yield mock_sleep
+

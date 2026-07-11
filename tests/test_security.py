@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from custom_components.esb_smart_meter.api_client import ESBDataApi
+from tests.conftest import _async_create_task_handler
 
 
 class TestAPISecurityInjection:
@@ -15,6 +16,7 @@ class TestAPISecurityInjection:
         """Create mock Home Assistant."""
         hass = MagicMock()
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+        hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
@@ -95,6 +97,7 @@ class TestAPISecurityAuth:
         """Create mock Home Assistant."""
         hass = MagicMock()
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+        hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
@@ -161,6 +164,7 @@ class TestAPISecurityDataValidation:
         """Create mock Home Assistant."""
         hass = MagicMock()
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+        hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
@@ -230,6 +234,7 @@ class TestAPISecurityCAPTCHA:
         """Create mock Home Assistant."""
         hass = MagicMock()
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+        hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
@@ -290,6 +295,7 @@ class TestAPISecurityRateLimiting:
         """Create mock Home Assistant."""
         hass = MagicMock()
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+        hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
@@ -339,6 +345,7 @@ class TestAPISecurityCornerCases:
         """Create mock Home Assistant."""
         hass = MagicMock()
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+        hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
