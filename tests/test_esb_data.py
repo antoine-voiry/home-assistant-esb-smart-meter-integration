@@ -325,6 +325,35 @@ class TestESBData:
         assert esb_data.today == 2.0
         assert esb_data.export_today == 0.0
 
+    def test_hourly_usage_buckets(self):
+        """Test 30-minute usage readings aggregate into hourly buckets."""
+        h = (datetime.now() - timedelta(hours=3)).replace(minute=0, second=0, microsecond=0)
+
+        def ts(dt):
+            return dt.strftime("%d-%m-%Y %H:%M")
+
+        rt = "Active Import Interval (kWh)"
+        data = [
+            {"Read Date and End Time": ts(h + timedelta(minutes=30)), "Read Value": "0.1", "Read Type": rt},
+            {"Read Date and End Time": ts(h + timedelta(minutes=60)), "Read Value": "0.2", "Read Type": rt},
+            {"Read Date and End Time": ts(h + timedelta(minutes=90)), "Read Value": "0.4", "Read Type": rt},
+        ]
+        buckets = ESBData(data=data).hourly_usage()
+        # end 00:30 + 01:00 fall in hour h; end 01:30 falls in hour h+1
+        assert buckets == [(h, pytest.approx(0.3)), (h + timedelta(hours=1), pytest.approx(0.4))]
+
+    def test_hourly_export_separate_from_usage(self):
+        """Test hourly buckets keep export separate from usage."""
+        h = (datetime.now() - timedelta(hours=3)).replace(minute=0, second=0, microsecond=0)
+        ts = (h + timedelta(minutes=30)).strftime("%d-%m-%Y %H:%M")
+        data = [
+            {"Read Date and End Time": ts, "Read Value": "1.5", "Read Type": "Active Import Interval (kWh)"},
+            {"Read Date and End Time": ts, "Read Value": "0.5", "Read Type": "Active Export Interval (kWh)"},
+        ]
+        esb_data = ESBData(data=data)
+        assert esb_data.hourly_usage() == [(h, pytest.approx(1.5))]
+        assert esb_data.hourly_export() == [(h, pytest.approx(0.5))]
+
     def test_get_export_readings_since(self):
         """Test get_export_readings_since returns only export readings."""
         now = datetime.now()
