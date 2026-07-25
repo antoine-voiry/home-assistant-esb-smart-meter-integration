@@ -22,6 +22,12 @@ from custom_components.esb_smart_meter.sensor import (
     ThisMonthSensor,
     ThisWeekSensor,
     TodaySensor,
+    Last7DaysExportSensor,
+    Last24HoursExportSensor,
+    Last30DaysExportSensor,
+    ThisMonthExportSensor,
+    ThisWeekExportSensor,
+    TodayExportSensor,
     async_setup_entry,
 )
 from tests.conftest import _async_create_task_handler
@@ -85,7 +91,7 @@ class TestAsyncSetupEntry:
         # Verify 10 sensors were created (6 data + 4 diagnostic sensors)
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 10
+        assert len(sensors) == 16
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -94,11 +100,17 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[3], Last7DaysSensor)
         assert isinstance(sensors[4], ThisMonthSensor)
         assert isinstance(sensors[5], Last30DaysSensor)
+        assert isinstance(sensors[6], TodayExportSensor)
+        assert isinstance(sensors[7], Last24HoursExportSensor)
+        assert isinstance(sensors[8], ThisWeekExportSensor)
+        assert isinstance(sensors[9], Last7DaysExportSensor)
+        assert isinstance(sensors[10], ThisMonthExportSensor)
+        assert isinstance(sensors[11], Last30DaysExportSensor)
         # Diagnostic sensors
-        assert isinstance(sensors[6], LastUpdateSensor)
-        assert isinstance(sensors[7], ApiStatusSensor)
-        assert isinstance(sensors[8], DataAgeSensor)
-        assert isinstance(sensors[9], CircuitBreakerStatusSensor)
+        assert isinstance(sensors[12], LastUpdateSensor)
+        assert isinstance(sensors[13], ApiStatusSensor)
+        assert isinstance(sensors[14], DataAgeSensor)
+        assert isinstance(sensors[15], CircuitBreakerStatusSensor)
 
 
 class TestBaseSensor:
@@ -364,6 +376,198 @@ class TestLast30DaysSensor:
     def test_get_readings(self, mock_coordinator):
         """Test Last 30 Days sensor get_readings calls model."""
         sensor = Last30DaysSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
+
+class TestTodayExportSensor:
+    """Test TodayExportSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test Today sensor export unique ID."""
+        sensor = TodayExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_today_export"
+
+    def test_get_data(self, mock_coordinator):
+        """Test Today sensor export gets correct data."""
+        sensor = TodayExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        esb_data = MagicMock()
+        esb_data.today_export = 15.5
+
+        result = sensor._get_data(esb_data=esb_data)
+        assert result == 15.5
+
+    def test_get_readings(self, mock_coordinator):
+        """Test Today export sensor get_readings calls model."""
+        sensor = TodayExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
+
+class TestLast24HoursExportSensor:
+    """Test Last24HoursExportSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test Last 24 Hours sensor export unique ID."""
+        sensor = Last24HoursExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_last_24_hours_export"
+
+    def test_get_data(self, mock_coordinator):
+        """Test Last 24 Hours sensor export gets correct data."""
+        sensor = Last24HoursExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        esb_data = MagicMock()
+        esb_data.last_24_hours_export = 25.3
+
+        result = sensor._get_data(esb_data=esb_data)
+        assert result == 25.3
+
+    def test_get_readings(self, mock_coordinator):
+        """Test Last 24 Hours sensor export get_readings calls model."""
+        sensor = Last24HoursExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
+
+class TestThisWeekExportSensor:
+    """Test ThisWeekExportSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test This Week sensor export unique ID."""
+        sensor = ThisWeekExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_this_week_export"
+
+    def test_get_data(self, mock_coordinator):
+        """Test This Week sensor export gets correct data."""
+        sensor = ThisWeekExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        esb_data = MagicMock()
+        esb_data.this_week_export = 85.7
+
+        result = sensor._get_data(esb_data=esb_data)
+        assert result == 85.7
+
+    def test_get_readings(self, mock_coordinator):
+        """Test This Week sensor export get_readings calls model."""
+        sensor = ThisWeekExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
+
+class TestLast7DaysExportSensor:
+    """Test Last7DaysExportSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test Last 7 Days sensor export unique ID."""
+        sensor = Last7DaysExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_last_7_days_export"
+
+    def test_get_data(self, mock_coordinator):
+        """Test Last 7 Days sensor export gets correct data."""
+        sensor = Last7DaysExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        esb_data = MagicMock()
+        esb_data.last_7_days_export = 175.2
+
+        result = sensor._get_data(esb_data=esb_data)
+        assert result == 175.2
+
+    def test_get_readings(self, mock_coordinator):
+        """Test Last 7 Days sensor export get_readings calls model."""
+        sensor = Last7DaysExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
+
+class TestThisMonthExportSensor:
+    """Test ThisMonthExportSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test This Month sensor export unique ID."""
+        sensor = ThisMonthExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_this_month_export"
+
+    def test_get_data(self, mock_coordinator):
+        """Test This Month sensor export gets correct data."""
+        sensor = ThisMonthExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        esb_data = MagicMock()
+        esb_data.this_month_export = 450.8
+
+        result = sensor._get_data(esb_data=esb_data)
+        assert result == 450.8
+
+    def test_get_readings(self, mock_coordinator):
+        """Test This Month sensor export get_readings calls model."""
+        sensor = ThisMonthExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+        esb_data = MagicMock()
+        sensor._get_readings(esb_data=esb_data)
+        assert esb_data.get_readings_since.called
+
+
+class TestLast30DaysExportSensor:
+    """Test Last30DaysExportSensor class."""
+
+    @pytest.fixture
+    def mock_coordinator(self):
+        """Create mock coordinator."""
+        return MagicMock(spec=DataUpdateCoordinator)
+
+    def test_unique_id(self, mock_coordinator):
+        """Test Last 30 Days sensor export unique ID."""
+        sensor = Last30DaysExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert sensor._attr_unique_id == "12345678901_last_30_days_export"
+
+    def test_get_data(self, mock_coordinator):
+        """Test Last 30 Days sensor export gets correct data."""
+        sensor = Last30DaysExportSensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        esb_data = MagicMock()
+        esb_data.last_30_days_export = 520.6
+
+        result = sensor._get_data(esb_data=esb_data)
+        assert result == 520.6
+
+    def test_get_readings(self, mock_coordinator):
+        """Test Last 30 Days sensor export get_readings calls model."""
+        sensor = Last30DaysExportSensor(coordinator=mock_coordinator, mprn="12345678901")
         esb_data = MagicMock()
         sensor._get_readings(esb_data=esb_data)
         assert esb_data.get_readings_since.called

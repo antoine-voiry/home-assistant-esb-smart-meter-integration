@@ -96,9 +96,11 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
                 await self._dismiss_captcha_notification()
 
             _LOGGER.debug(
-                "Successfully fetched ESB data: today=%.2f kWh, last_30_days=%.2f kWh",
+                "Successfully fetched ESB data: today=%.2f kWh, last_30_days=%.2f kWh, today_export=%.2f kWh, last_30_days_export=%.2f kWh",
                 esb_data.today,
                 esb_data.last_30_days,
+                esb_data.today_export,
+                esb_data.last_30_days_export,
             )
 
             # Update the last successful update time

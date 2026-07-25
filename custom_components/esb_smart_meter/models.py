@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
-from .const import CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_DATE_FORMAT, MAX_DATA_AGE_DAYS
+from .const import CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_DATE_FORMAT, MAX_DATA_AGE_DAYS, CSV_COLUMN_VALUE_TYPE, TYPE_EXPORT, TYPE_IMPORT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,9 +18,9 @@ class ESBData:
         if data:
             if not self._validate_csv_structure(data[0]):
                 _LOGGER.error("CSV validation failed. First row keys: %s", list(data[0].keys()))
-                _LOGGER.error("Expected columns: %s, %s", CSV_COLUMN_DATE, CSV_COLUMN_VALUE)
+                _LOGGER.error("Expected columns: %s, %s, %s", CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_COLUMN_VALUE_TYPE)
                 _LOGGER.error("First row data: %s", data[0])
-                raise ValueError(f"Invalid CSV structure. Expected columns: " f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}")
+                raise ValueError(f"Invalid CSV structure. Expected columns: " f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}, {CSV_COLUMN_VALUE_TYPE}")
 
         # Filter out data older than MAX_DATA_AGE_DAYS to prevent memory leaks
         cutoff_date = datetime.now() - timedelta(days=MAX_DATA_AGE_DAYS)
@@ -34,7 +34,7 @@ class ESBData:
     @staticmethod
     def _validate_csv_structure(row: dict[str, Any]) -> bool:
         """Validate that required CSV columns exist."""
-        required_columns = [CSV_COLUMN_DATE, CSV_COLUMN_VALUE]
+        required_columns = [CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_COLUMN_VALUE_TYPE]
         available_columns = list(row.keys())
         has_required = all(col in row for col in required_columns)
 
@@ -51,55 +51,90 @@ class ESBData:
                 timestamp = datetime.strptime(row[CSV_COLUMN_DATE], CSV_DATE_FORMAT)
                 if timestamp >= cutoff_date:
                     value = float(row[CSV_COLUMN_VALUE])
-                    parsed_data.append((timestamp, value))
+                    value_type = row[CSV_COLUMN_VALUE_TYPE]
+                    parsed_data.append((timestamp, value, value_type))
             except (ValueError, KeyError) as err:
                 _LOGGER.warning("Skipping invalid row: %s", err)
                 continue
         return parsed_data
 
-    def __sum_data_since(self, *, since: datetime) -> float:
+    def __sum_data_since(self, *, since: datetime, value_type_arg=TYPE_IMPORT) -> float:
         """Sum energy usage since a specific datetime (optimized)."""
-        return sum(value for timestamp, value in self._data if timestamp >= since)
+        return sum(value for timestamp, value, value_type in self._data if timestamp >= since and value_type_arg in value_type)
 
-    def get_readings_since(self, *, since: datetime) -> list[dict[str, Any]]:
+    def get_readings_since(self, *, since: datetime, value_type_arg=TYPE_IMPORT) -> list[dict[str, Any]]:
         """Get energy usage readings since a specific datetime."""
         if since.tzinfo is not None:
             since = since.replace(tzinfo=None)
         return [
             {"timestamp": timestamp.isoformat(), "value": value}
-            for timestamp, value in self._data
-            if timestamp >= since
+            for timestamp, value, value_type in self._data
+            if timestamp >= since and value_type_arg in value_type
         ]
 
     @property
     def today(self) -> float:
         """Get today's usage."""
-        return self.__sum_data_since(since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0))
+        return self.__sum_data_since(since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0), value_type_arg=TYPE_IMPORT)
 
     @property
     def last_24_hours(self) -> float:
         """Get last 24 hours usage."""
-        return self.__sum_data_since(since=datetime.now() - timedelta(days=1))
+        return self.__sum_data_since(since=datetime.now() - timedelta(days=1), value_type_arg=TYPE_IMPORT)
 
     @property
     def this_week(self) -> float:
         """Get this week's usage."""
         return self.__sum_data_since(
             since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            - timedelta(days=datetime.now().weekday())
+            - timedelta(days=datetime.now().weekday()), value_type_arg=TYPE_IMPORT
         )
 
     @property
     def last_7_days(self) -> float:
         """Get last 7 days usage."""
-        return self.__sum_data_since(since=datetime.now() - timedelta(days=7))
+        return self.__sum_data_since(since=datetime.now() - timedelta(days=7), value_type_arg=TYPE_IMPORT)
 
     @property
     def this_month(self) -> float:
         """Get this month's usage."""
-        return self.__sum_data_since(since=datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+        return self.__sum_data_since(since=datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0), value_type_arg=TYPE_IMPORT)
 
     @property
     def last_30_days(self) -> float:
         """Get last 30 days usage."""
-        return self.__sum_data_since(since=datetime.now() - timedelta(days=30))
+        return self.__sum_data_since(since=datetime.now() - timedelta(days=30), value_type_arg=TYPE_IMPORT)
+
+    @property
+    def today_export(self) -> float:
+        """Get today's usage."""
+        return self.__sum_data_since(since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0), value_type_arg=TYPE_EXPORT)
+
+    @property
+    def last_24_hours_export(self) -> float:
+        """Get last 24 hours usage."""
+        return self.__sum_data_since(since=datetime.now() - timedelta(days=1), value_type_arg=TYPE_EXPORT)
+
+    @property
+    def this_week_export(self) -> float:
+        """Get this week's usage."""
+        return self.__sum_data_since(
+            since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=datetime.now().weekday()), value_type_arg=TYPE_EXPORT
+        )
+
+    @property
+    def last_7_days_export(self) -> float:
+        """Get last 7 days usage."""
+        return self.__sum_data_since(since=datetime.now() - timedelta(days=7), value_type_arg=TYPE_EXPORT)
+
+    @property
+    def this_month_export(self) -> float:
+        """Get this month's usage."""
+        return self.__sum_data_since(since=datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0), value_type_arg=TYPE_EXPORT)
+
+    @property
+    def last_30_days_export(self) -> float:
+        """Get last 30 days usage."""
+        return self.__sum_data_since(since=datetime.now() - timedelta(days=30), value_type_arg=TYPE_EXPORT)
+

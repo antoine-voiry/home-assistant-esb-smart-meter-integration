@@ -46,15 +46,28 @@ class TestESBData:
             {
                 "Read Date and End Time": today_start.strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "2.5",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": today_start.strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "3.5",
+                "Read Type": "Active Export Interval (kWh)",
             },
             {
                 "Read Date and End Time": (today_start + timedelta(hours=1)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "3.0",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": (today_start + timedelta(hours=1)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "3.0",
+                "Read Type": "Active Export Interval (kWh)",
             },
         ]
 
         esb_data = ESBData(data=data)
         assert esb_data.today == 5.5
+        assert esb_data.today_export == 6.5
 
     def test_esb_data_last_24_hours(self):
         """Test last 24 hours data calculation."""
@@ -64,15 +77,29 @@ class TestESBData:
             {
                 "Read Date and End Time": (now - timedelta(hours=23)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "1.0",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": (now - timedelta(hours=23)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "5.0",
+                "Read Type": "Active Export Interval (kWh)",
             },
             {
                 "Read Date and End Time": (now - timedelta(hours=25)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "2.0",  # Should not be included
+                "Read Type": "Active Import Interval (kWh)",
             },
+            {
+                "Read Date and End Time": (now - timedelta(hours=25)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "2.0",  # Should not be included
+                "Read Type": "Active Export Interval (kWh)",
+            },
+
         ]
 
         esb_data = ESBData(data=data)
         assert esb_data.last_24_hours == 1.0
+        assert esb_data.last_24_hours_export == 5.0
 
     def test_esb_data_this_week(self):
         """Test this week's data calculation."""
@@ -83,15 +110,28 @@ class TestESBData:
             {
                 "Read Date and End Time": week_start.strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "5.0",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": week_start.strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "6.0",
+                "Read Type": "Active Export Interval (kWh)",
             },
             {
                 "Read Date and End Time": (week_start + timedelta(days=1)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "3.0",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": (week_start + timedelta(days=1)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "3.0",
+                "Read Type": "Active Export Interval (kWh)",
             },
         ]
 
         esb_data = ESBData(data=data)
         assert esb_data.this_week == 8.0
+        assert esb_data.this_week_export == 9.0
 
     def test_esb_data_last_7_days(self):
         """Test last 7 days data calculation."""
@@ -103,11 +143,20 @@ class TestESBData:
                 {
                     "Read Date and End Time": (now - timedelta(days=i)).strftime("%d-%m-%Y %H:%M"),
                     "Read Value": "1.0",
+                    "Read Type": "Active Import Interval (kWh)",
+                }
+            )
+            data.append(
+                {
+                    "Read Date and End Time": (now - timedelta(days=i)).strftime("%d-%m-%Y %H:%M"),
+                    "Read Value": "100.0",
+                    "Read Type": "Active Export Interval (kWh)",
                 }
             )
 
         esb_data = ESBData(data=data)
         assert esb_data.last_7_days == 7.0
+        assert esb_data.last_7_days_export == 700.0
 
     def test_esb_data_this_month(self):
         """Test this month's data calculation."""
@@ -118,15 +167,28 @@ class TestESBData:
             {
                 "Read Date and End Time": month_start.strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "10.0",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": month_start.strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "20.0",
+                "Read Type": "Active Export Interval (kWh)",
             },
             {
                 "Read Date and End Time": (month_start + timedelta(days=5)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "5.0",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": (month_start + timedelta(days=5)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "25.0",
+                "Read Type": "Active Export Interval (kWh)",
             },
         ]
 
         esb_data = ESBData(data=data)
         assert esb_data.this_month == 15.0
+        assert esb_data.this_month_export == 45.0
 
     def test_esb_data_last_30_days(self):
         """Test last 30 days data calculation."""
@@ -138,11 +200,20 @@ class TestESBData:
                 {
                     "Read Date and End Time": (now - timedelta(days=i)).strftime("%d-%m-%Y %H:%M"),
                     "Read Value": "2.0",
+                    "Read Type": "Active Import Interval (kWh)",
+                }
+            )
+            data.append(
+                {
+                    "Read Date and End Time": (now - timedelta(days=i)).strftime("%d-%m-%Y %H:%M"),
+                    "Read Value": "3.0",
+                    "Read Type": "Active Export Interval (kWh)",
                 }
             )
 
         esb_data = ESBData(data=data)
         assert esb_data.last_30_days == 60.0
+        assert esb_data.last_30_days_export == 90.0
 
     def test_esb_data_invalid_csv_structure(self):
         """Test invalid CSV structure handling."""
@@ -165,10 +236,12 @@ class TestESBData:
             {
                 "Read Date and End Time": (now - timedelta(days=95)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "1.0",
+                "Read Type": "Active Import Interval (kWh)",
             },
             {
                 "Read Date and End Time": (now - timedelta(days=50)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "2.0",
+                "Read Type": "Active Import Interval (kWh)",
             },
         ]
 
@@ -184,14 +257,17 @@ class TestESBData:
             {
                 "Read Date and End Time": now.strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "5.0",
+                "Read Type": "Active Import Interval (kWh)",
             },
             {
                 "Read Date and End Time": "invalid-date",
                 "Read Value": "1.0",
+                "Read Type": "Active Import Interval (kWh)",
             },
             {
                 "Read Date and End Time": now.strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "not-a-number",
+                "Read Type": "Active Import Interval (kWh)",
             },
         ]
 
@@ -208,20 +284,40 @@ class TestESBData:
             {
                 "Read Date and End Time": now.strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "5.0",
+                "Read Type": "Active Import Interval (kWh)",
             },
             {
                 "Read Date and End Time": (now - timedelta(hours=1)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "3.0",
+                "Read Type": "Active Import Interval (kWh)",
             },
             {
                 "Read Date and End Time": (now - timedelta(days=2)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "1.0",
+                "Read Type": "Active Import Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": now.strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "10.0",
+                "Read Type": "Active Export Interval (kWh)",
+            },
+            {
+                "Read Date and End Time": (now - timedelta(hours=1)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "20.0",
+                "Read Type": "Active Export Interval (kWh)",
             },
         ]
         esb_data = ESBData(data=data)
-        
+
         # Readings since 12 hours ago
         readings = esb_data.get_readings_since(since=now - timedelta(hours=12))
         assert len(readings) == 2
         assert readings[0]["value"] == 5.0
         assert readings[1]["value"] == 3.0
+
+
+        # Readings since 12 hours ago for exports
+        readings = esb_data.get_readings_since(since=now - timedelta(hours=12), value_type_arg="Active Export")
+        assert len(readings) == 2
+        assert readings[0]["value"] == 10.0
+        assert readings[1]["value"] == 20.0

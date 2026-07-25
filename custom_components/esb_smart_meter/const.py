@@ -71,7 +71,12 @@ ESB_DOWNLOAD_URL = "https://myaccount.esbnetworks.ie/DataHub/DownloadHdfPeriodic
 # CSV columns expected from ESB
 CSV_COLUMN_DATE = "Read Date and End Time"
 CSV_COLUMN_VALUE = "Read Value"
+CSV_COLUMN_VALUE_TYPE = "Read Type"
 CSV_DATE_FORMAT = "%d-%m-%Y %H:%M"
+
+# Enums for different types of reads
+TYPE_IMPORT = "Active Import"
+TYPE_EXPORT = "Active Export"
 
 # Device information
 MANUFACTURER = "ESB Networks"

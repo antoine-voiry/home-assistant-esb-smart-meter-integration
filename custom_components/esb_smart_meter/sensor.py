@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import DOMAIN, MANUFACTURER, MODEL, TYPE_EXPORT
 from .coordinator import ESBDataUpdateCoordinator
 from .models import ESBData
 
@@ -38,6 +38,12 @@ async def async_setup_entry(
         Last7DaysSensor(coordinator=coordinator, mprn=mprn),
         ThisMonthSensor(coordinator=coordinator, mprn=mprn),
         Last30DaysSensor(coordinator=coordinator, mprn=mprn),
+        TodayExportSensor(coordinator=coordinator, mprn=mprn),
+        Last24HoursExportSensor(coordinator=coordinator, mprn=mprn),
+        ThisWeekExportSensor(coordinator=coordinator, mprn=mprn),
+        Last7DaysExportSensor(coordinator=coordinator, mprn=mprn),
+        ThisMonthExportSensor(coordinator=coordinator, mprn=mprn),
+        Last30DaysExportSensor(coordinator=coordinator, mprn=mprn),
         # Diagnostic sensors
         LastUpdateSensor(coordinator=coordinator, mprn=mprn),
         ApiStatusSensor(coordinator=coordinator, mprn=mprn),
@@ -241,6 +247,141 @@ class Last30DaysSensor(BaseSensor):
         return esb_data.get_readings_since(since=datetime.now() - timedelta(days=30))
 
 
+
+class TodayExportSensor(BaseSensor):
+    """Sensor for today's electricity export."""
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Export: Today",
+        )
+        self._attr_unique_id = f"{mprn}_today_export"
+
+    def _get_data(self, *, esb_data: ESBData) -> float:
+        """Get today's export data."""
+        return esb_data.today_export
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get today's export readings."""
+        from datetime import datetime
+        return esb_data.get_readings_since(since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0), value_type_arg=TYPE_EXPORT)
+
+
+class Last24HoursExportSensor(BaseSensor):
+    """Sensor for last 24 hours electricity export."""
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Export: Last 24 Hours",
+        )
+        self._attr_unique_id = f"{mprn}_last_24_hours_export"
+
+    def _get_data(self, *, esb_data: ESBData) -> float:
+        """Get last 24 hours export data."""
+        return esb_data.last_24_hours_export
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get last 24 hours export readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(since=datetime.now() - timedelta(days=1), value_type_arg=TYPE_EXPORT)
+
+
+class ThisWeekExportSensor(BaseSensor):
+    """Sensor for this week's electricity export."""
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Export: This Week",
+        )
+        self._attr_unique_id = f"{mprn}_this_week_export"
+
+    def _get_data(self, *, esb_data: ESBData) -> float:
+        """Get this week's export data."""
+        return esb_data.this_week_export
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get this week's export readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(
+            since=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=datetime.now().weekday()), value_type_arg=TYPE_EXPORT
+        )
+
+
+class Last7DaysExportSensor(BaseSensor):
+    """Sensor for last 7 days electricity export."""
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Export: Last 7 Days",
+        )
+        self._attr_unique_id = f"{mprn}_last_7_days_export"
+
+    def _get_data(self, *, esb_data: ESBData) -> float:
+        """Get last 7 days export data."""
+        return esb_data.last_7_days_export
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get last 7 days export readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(since=datetime.now() - timedelta(days=7), value_type_arg=TYPE_EXPORT)
+
+
+class ThisMonthExportSensor(BaseSensor):
+    """Sensor for this month's electricity export."""
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Export: This Month",
+        )
+        self._attr_unique_id = f"{mprn}_this_month_export"
+
+    def _get_data(self, *, esb_data: ESBData) -> float:
+        """Get this month's export data."""
+        return esb_data.this_month_export
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get this month's export readings."""
+        from datetime import datetime
+        return esb_data.get_readings_since(since=datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0), value_type_arg=TYPE_EXPORT)
+
+
+class Last30DaysExportSensor(BaseSensor):
+    """Sensor for last 30 days electricity export."""
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            coordinator=coordinator,
+            mprn=mprn,
+            name="ESB Electricity Export: Last 30 Days",
+        )
+        self._attr_unique_id = f"{mprn}_last_30_days_export"
+
+    def _get_data(self, *, esb_data: ESBData) -> float:
+        """Get last 30 days export data."""
+        return esb_data.last_30_days_export
+
+    def _get_readings(self, *, esb_data: ESBData) -> list[dict[str, Any]]:
+        """Get last 30 days export readings."""
+        from datetime import datetime, timedelta
+        return esb_data.get_readings_since(since=datetime.now() - timedelta(days=30), value_type_arg=TYPE_EXPORT)
+
 class LastUpdateSensor(SensorEntity):
     """Sensor for last update timestamp."""
 
@@ -409,12 +550,12 @@ class CircuitBreakerStatusSensor(SensorEntity):
     def native_value(self) -> str:
         """Return circuit breaker state."""
         cb = self.coordinator.esb_api._circuit_breaker
-        
+
         if not hasattr(cb, '_is_open'):
             return "unknown"
-        
+
         now = datetime.now()
-        
+
         # Check if circuit is open
         if cb._is_open and cb._last_failure_time:
             # Calculate backoff time
@@ -424,26 +565,26 @@ class CircuitBreakerStatusSensor(SensorEntity):
                 CIRCUIT_BREAKER_MAX_TIMEOUT,
             )
             elapsed = (now - cb._last_failure_time).total_seconds()
-            
+
             if elapsed < backoff_time:
                 return "open"
             return "half_open"
-        
+
         return "closed"
 
     @property
     def extra_state_attributes(self) -> dict:
         """Return additional state attributes."""
         cb = self.coordinator.esb_api._circuit_breaker
-        
+
         if not hasattr(cb, '_failure_count'):
             return {}
-        
+
         attrs = {
             "failure_count": cb._failure_count,
             "daily_attempts": cb._daily_attempts,
         }
-        
+
         # Add constants for reference
         from .const import (
             CIRCUIT_BREAKER_FAILURES,
@@ -452,7 +593,7 @@ class CircuitBreakerStatusSensor(SensorEntity):
         )
         attrs["failure_threshold"] = CIRCUIT_BREAKER_FAILURES
         attrs["daily_limit"] = MAX_AUTH_ATTEMPTS_PER_DAY
-        
+
         # Add backoff information if circuit is open
         if cb._is_open and cb._last_failure_time:
             now = datetime.now()
@@ -463,23 +604,23 @@ class CircuitBreakerStatusSensor(SensorEntity):
             )
             elapsed = (now - cb._last_failure_time).total_seconds()
             remaining = max(0, backoff_time - elapsed)
-            
+
             attrs["backoff_seconds"] = int(backoff_time)
             attrs["time_remaining_seconds"] = int(remaining)
             attrs["time_remaining_minutes"] = round(remaining / 60, 1)
-            
+
             if remaining > 0:
                 blocked_until = cb._last_failure_time
                 from datetime import timedelta
                 blocked_until = blocked_until + timedelta(seconds=backoff_time)
                 attrs["blocked_until"] = blocked_until.isoformat()
-        
+
         if cb._last_failure_time:
             attrs["last_failure"] = cb._last_failure_time.isoformat()
-        
+
         if cb._daily_attempts_reset_time:
             attrs["daily_counter_resets"] = cb._daily_attempts_reset_time.date().isoformat()
-        
+
         return attrs
 
     @property
