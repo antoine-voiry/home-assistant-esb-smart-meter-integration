@@ -29,9 +29,9 @@ def mock_esb_data():
     date_str = now.strftime("%d-%m-%Y %H:%M")
     return ESBData(
         data=[
-            {"Read Date and End Time": date_str, "Read Value": "0.5"},
-            {"Read Date and End Time": date_str, "Read Value": "0.6"},
-            {"Read Date and End Time": date_str, "Read Value": "0.4"},
+            {"Read Date and End Time": date_str, "Read Value": "0.5", "Read Type": "Active Import Interval (kWh)"},
+            {"Read Date and End Time": date_str, "Read Value": "0.6", "Read Type": "Active Import Interval (kWh)"},
+            {"Read Date and End Time": date_str, "Read Value": "0.4", "Read Type": "Active Import Interval (kWh)"},
         ]
     )
 
