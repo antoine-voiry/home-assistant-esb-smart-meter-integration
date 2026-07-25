@@ -51,11 +51,11 @@ Before installing this integration, ensure you have:
 
 1. **ESB Networks Account**: Active account at [myaccount.esbnetworks.ie](https://myaccount.esbnetworks.ie/)
    - You should be able to log in and view your electricity usage on their website
-   
+
 2. **MPRN Number**: Your meter's 11-digit Meter Point Reference Number (MPRN)
    - Find this on your electricity bill or ESB Networks account
    - Format: `XXXXXXXXXXX` (11 digits)
-   
+
 3. **Home Assistant**: Version 2023.1.0 or later
    - Required for modern config entry and async support
 
@@ -100,10 +100,10 @@ For advanced users who prefer manual installation:
    ```bash
    # Navigate to your Home Assistant config directory
    cd /config  # or wherever your configuration.yaml is located
-   
+
    # Create custom_components folder if it doesn't exist
    mkdir -p custom_components
-   
+
    # Copy the integration
    cp -r /path/to/extracted/custom_components/esb_smart_meter custom_components/
    ```
@@ -451,9 +451,10 @@ cd home-assistant-esb-smart-meter-integration
 
 # Install development dependencies
 pip install -r requirements-test.txt
+pip install pytest-cov pytest-asyncio
 
 # Run tests
-pytest tests/
+pytest tests/ -v --cov=custom_components.esb_smart_meter --cov-report=term-missing --cov-report=html
 ```
 
 ---
