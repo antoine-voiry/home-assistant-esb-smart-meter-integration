@@ -70,9 +70,9 @@ class ESBData:
                     continue
                 value = float(row[CSV_COLUMN_VALUE])
                 read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
-                if read_type == READ_TYPE_IMPORT:
+                if READ_TYPE_IMPORT in read_type:
                     import_data.append((timestamp, value))
-                elif read_type == READ_TYPE_EXPORT:
+                elif READ_TYPE_EXPORT in read_type:
                     export_data.append((timestamp, value))
                 else:
                     raise ValueError(f"Unrecognized Read Type in row: {row}")
