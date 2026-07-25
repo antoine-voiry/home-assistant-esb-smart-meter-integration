@@ -48,7 +48,8 @@ def sample_csv_data():
     for i in range(30):
         date = now - timedelta(days=i)
         date_str = date.strftime("%d-%m-%Y %H:%M")
-        csv_lines.append(f"{date_str},1.5,Active Import,12345678901")
+        csv_lines.append(f"{date_str},1.5,Active Import Interval (kWh),12345678901")
+        csv_lines.append(f"{date_str},0.5,Active Export Interval (kWh),12345678901")
 
     return "\n".join(csv_lines)
 

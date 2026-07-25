@@ -30,7 +30,7 @@ A comprehensive Home Assistant integration for monitoring your electricity usage
 
 ## ✨ Features
 
-- **📊 Six Time-Period Sensors**: Track usage for today, last 24 hours, this week, last 7 days, this month, and last 30 days
+- **📊 Twelve Time-Period Sensors**: Track usage and export for today, last 24 hours, this week, last 7 days, this month, and last 30 days
 - **🔄 Smart Caching**: Automatic data updates every 24 hours to minimize API calls and respect ESB's systems
 - **🔁 Robust Retry Logic**: 5 automatic retry attempts with 2-minute intervals on network failures
 - **⚡ Async Implementation**: Non-blocking async/await design using aiohttp for optimal Home Assistant performance
@@ -145,7 +145,7 @@ The integration validates:
 
 ## 📊 Sensors
 
-After successful setup, you'll have **six sensors** created under a single device:
+After successful setup, you'll have **twelve sensors** created under a single device:
 
 | Sensor Entity ID | Description | Time Period |
 |-----------------|-------------|-------------|
@@ -155,6 +155,12 @@ After successful setup, you'll have **six sensors** created under a single devic
 | `sensor.esb_electricity_usage_last_7_days` | Rolling 7-day usage | Last 7 days |
 | `sensor.esb_electricity_usage_this_month` | Usage since 1st of this month | 1st 00:00 → now |
 | `sensor.esb_electricity_usage_last_30_days` | Rolling 30-day usage | Last 30 days |
+| `sensor.esb_electricity_export_today` | Export since midnight today | 00:00 today → now |
+| `sensor.esb_electricity_export_last_24_hours` | Rolling 24-hour export | Last 24 hours |
+| `sensor.esb_electricity_export_this_week` | Export since Monday this week | Monday 00:00 → now |
+| `sensor.esb_electricity_export_last_7_days` | Rolling 7-day export | Last 7 days |
+| `sensor.esb_electricity_export_this_month` | Export since 1st of this month | 1st 00:00 → now |
+| `sensor.esb_electricity_export_last_30_days` | Rolling 30-day export | Last 30 days |
 
 **All sensors report in kilowatt-hours (kWh)** with the `⚡` icon.
 
