@@ -946,3 +946,23 @@ class TestESBDataApiErrorConditions:
         responses.append(mock_resp7)
         
         return responses
+
+@pytest.mark.asyncio
+async def test_raw_fetch_is_immutable_one_download_and_compatible_wrapper(mock_hass, mock_aiohttp_session, sample_csv_data):
+    from dataclasses import FrozenInstanceError
+    from custom_components.esb_smart_meter.models import ESBData
+    api = ESBDataApi(hass=mock_hass,session=mock_aiohttp_session,
+        username='synthetic',password='synthetic',mprn='synthetic')
+    mock_hass.async_add_executor_job.side_effect=lambda function,*args:function(*args)
+    with patch.object(api,'_ESBDataApi__login',new=AsyncMock(return_value={'download_token':'synthetic','user_agent':'synthetic'})) as login, patch.object(api,'_ESBDataApi__fetch_data',new=AsyncMock(return_value=sample_csv_data)) as download:
+        fetched=await api.fetch_with_raw()
+        assert fetched.raw_text == sample_csv_data
+        assert isinstance(fetched.data,ESBData)
+        login.assert_awaited_once()
+        download.assert_awaited_once_with('synthetic','synthetic')
+        with pytest.raises(FrozenInstanceError):
+            fetched.raw_text='replacement'
+        login.reset_mock();download.reset_mock()
+        assert isinstance(await api.fetch(),ESBData)
+        login.assert_awaited_once();download.assert_awaited_once()
+        assert not any(value is sample_csv_data for value in vars(api).values())

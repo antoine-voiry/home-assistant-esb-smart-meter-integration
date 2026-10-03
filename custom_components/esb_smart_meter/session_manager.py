@@ -216,7 +216,7 @@ class SessionManager:
                 cookie = SimpleCookie()
                 cookie[name] = value
                 # Add to jar with ESB domain
-                session.cookie_jar.update_cookies(cookie, "https://myaccount.esbnetworks.ie")
+                session.cookie_jar.update_cookies(cookie, URL("https://myaccount.esbnetworks.ie"))
 
             validation_headers = {
                 "User-Agent": user_agent,

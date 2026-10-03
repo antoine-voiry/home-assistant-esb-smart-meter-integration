@@ -6,6 +6,7 @@ import json
 import logging
 import re
 from io import StringIO
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
 
@@ -30,6 +31,14 @@ from .session_manager import CaptchaRequiredException, SessionManager
 from .utils import get_human_like_delay, get_random_user_agent
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RawFetchResult:
+    """One download, original immutable text and legacy presentation."""
+
+    raw_text: str
+    data: ESBData
 
 
 class ESBDataApi:
@@ -525,6 +534,10 @@ class ESBDataApi:
             raise
 
     async def fetch(self) -> ESBData:
+        """Backward-compatible presentation from the single download path."""
+        return (await self.fetch_with_raw()).data
+
+    async def fetch_with_raw(self) -> RawFetchResult:
         """Fetch data with circuit breaker, retry logic, and conditional download."""
         # Check circuit breaker before attempting
         if not self._circuit_breaker.can_attempt():
@@ -552,7 +565,7 @@ class ESBDataApi:
             # Success! Record in circuit breaker
             self._circuit_breaker.record_success()
 
-            return ESBData(data=data)
+            return RawFetchResult(raw_text=csv_data, data=ESBData(data=data))
 
         except CaptchaRequiredException:
             # Don't record as circuit breaker failure - this requires user action

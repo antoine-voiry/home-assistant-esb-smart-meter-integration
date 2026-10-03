@@ -497,3 +497,26 @@ class TestCaptchaRequiredException:
         exc = CaptchaRequiredException()
         assert "CAPTCHA verification required" in str(exc)
         assert exc.requires_user_action is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,expected", [(200, True), (302, False), (401, False)])
+async def test_cached_validation_with_real_cookie_jar(session_manager, status, expected):
+    """Exercise actual aiohttp URL handling, without credentials or network."""
+    import aiohttp
+    from yarl import URL
+
+    jar = aiohttp.CookieJar(unsafe=True)
+    response = MagicMock(status=status)
+    session = MagicMock(cookie_jar=jar)
+    session.get.return_value.__aenter__ = AsyncMock(return_value=response)
+    session.close = AsyncMock()
+    with patch("custom_components.esb_smart_meter.session_manager.aiohttp.ClientSession", return_value=session):
+        result = await session_manager.validate_session_cookies(
+            {"synthetic_session": "non-secret-test-value"}, "Test User Agent"
+        )
+    assert result is expected
+    assert jar.filter_cookies(URL("https://myaccount.esbnetworks.ie/"))["synthetic_session"].value == "non-secret-test-value"
+    session.get.assert_called_once()
+    assert session.get.call_args.kwargs["allow_redirects"] is False
+    session.close.assert_awaited_once()
