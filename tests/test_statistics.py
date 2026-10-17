@@ -98,3 +98,17 @@ async def test_no_data_adds_nothing():
         await async_import_hourly_statistics(hass, USAGE_ID, [])
 
     add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_metadata_declares_energy_unit_class(hourly_usage):
+    """HA 2026.11 requires unit_class on imported statistics."""
+    hass = MagicMock()
+    with patch("custom_components.esb_smart_meter.statistics.get_instance") as get_instance, patch(
+        "custom_components.esb_smart_meter.statistics.async_import_statistics"
+    ) as add:
+        get_instance.return_value.async_add_executor_job = AsyncMock(return_value={})
+        await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
+
+    _hass, metadata, _stats = add.call_args.args
+    assert metadata["unit_class"] == "energy"

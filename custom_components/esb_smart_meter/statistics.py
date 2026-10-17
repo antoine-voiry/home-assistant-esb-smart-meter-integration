@@ -14,6 +14,7 @@ from homeassistant.components.recorder.statistics import (
     statistics_during_period,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.util.unit_conversion import EnergyConverter
 
 from .models import DUBLIN_TZ
 
@@ -52,6 +53,7 @@ async def async_import_hourly_statistics(
         source=RECORDER_SOURCE,
         statistic_id=statistic_id,
         unit_of_measurement="kWh",
+        unit_class=EnergyConverter.UNIT_CLASS,
     )
     async_import_statistics(hass, metadata, stats)
     _LOGGER.debug("Imported %d statistics rows to %s (total %.3f)", len(stats), statistic_id, running_sum)
