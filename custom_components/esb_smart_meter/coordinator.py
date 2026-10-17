@@ -35,6 +35,7 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         mprn: str,
         config_entry,
         update_interval: timedelta = DEFAULT_SCAN_INTERVAL,
+        energy_runtime=None,
     ) -> None:
         """
         Initialize the coordinator.
@@ -52,6 +53,8 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             name=f"{DOMAIN}_{mprn}",
             update_interval=update_interval,
         )
+        self.energy_runtime = energy_runtime
+        self.energy_status = None
         self.esb_api = esb_api
         self.mprn = mprn
         self.config_entry = config_entry
@@ -75,7 +78,12 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             _LOGGER.debug("Fetching data from ESB for MPRN %s", self.mprn)
 
             # Fetch data from ESB API
-            esb_data = await self.esb_api.fetch()
+            if self.energy_runtime is None:
+                esb_data = await self.esb_api.fetch()
+            else:
+                fetched = await self.esb_api.fetch_with_raw()
+                esb_data = fetched.data
+                self.energy_status = await self.energy_runtime.async_process_csv(fetched.raw_text)
 
             if esb_data is None:
                 raise UpdateFailed("No data returned from ESB API")
