@@ -272,11 +272,6 @@ class ESBDataApi:
                     # Defensive: raise clear error and do not proceed
                     raise ValueError("Could not find auto-submit form in ESB response (form is None)")
 
-                # Defensive: check again before accessing form fields
-                if form is None:
-                    _LOGGER.error("Form is None before extracting fields. This should not happen.")
-                    raise ValueError("Form is None before extracting fields.")
-
                 # Extract form fields
                 state_input = form.find("input", {"name": "state"}) if form else None
                 client_info_input = form.find("input", {"name": "client_info"}) if form else None

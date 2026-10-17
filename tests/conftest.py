@@ -11,10 +11,8 @@ def _async_create_task_handler(coro):
     
     This prevents RuntimeWarning about unawaited coroutines in tests.
     """
-    try:
+    if hasattr(coro, "close"):
         coro.close()
-    except Exception:
-        pass
     return MagicMock()
 
 

@@ -448,7 +448,7 @@ class TestESBData:
 
     def test_get_readings_since(self):
         """Test get_readings_since returns correct dictionary list."""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         now = _dublin_now()
         data = [
             {

@@ -326,3 +326,11 @@ class TestCreateEsbSession:
         await session.close()
         # After close, should be closed
         assert session.closed
+
+
+def test_user_agents_are_single_complete_strings():
+    """Merging adjacent literals must not change the list."""
+    from custom_components.esb_smart_meter.user_agents import USER_AGENTS
+
+    assert len(USER_AGENTS) == len(set(USER_AGENTS))
+    assert all(ua.startswith("Mozilla/5.0 (") and ua.count("Mozilla/5.0") == 1 for ua in USER_AGENTS)

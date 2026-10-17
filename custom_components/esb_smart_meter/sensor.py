@@ -1,6 +1,5 @@
 """Support for ESB Smart Meter sensors."""
 
-import logging
 from abc import abstractmethod
 from typing import Any
 from datetime import datetime, timezone
@@ -18,7 +17,6 @@ from .coordinator import ESBDataUpdateCoordinator
 from .models import ESBData
 from .statistics import async_import_hourly_statistics
 
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
