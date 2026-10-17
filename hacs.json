@@ -3,7 +3,7 @@
   "content_in_root": false,
   "filename": "esb_smart_meter",
   "country": ["IE"],
-  "homeassistant": "2023.1.0",
+  "homeassistant": "2025.11.0",
   "render_readme": true,
   "hide_default_branch": true
 }
