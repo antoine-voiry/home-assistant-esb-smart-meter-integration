@@ -3,7 +3,7 @@
   "name": "ESB Smart Meter",
   "codeowners": ["@antoine-voiry"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["recorder"],
   "documentation": "https://github.com/antoine-voiry/home-assistant-esb-smart-meter-integration",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/antoine-voiry/home-assistant-esb-smart-meter-integration/issues",
