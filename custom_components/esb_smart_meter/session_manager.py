@@ -108,13 +108,16 @@ class SessionManager:
         cookies: dict[str, str],
         user_agent: str,
         download_token: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Save session data to disk for reuse.
 
         Args:
             cookies: Session cookies to save
             user_agent: User agent string used for this session
             download_token: Optional download token (if available)
+
+        Returns:
+            True if the session was written to disk
         """
         try:
             # Calculate expiry time
@@ -136,9 +139,11 @@ class SessionManager:
                 "Session saved successfully (expires: %s)",
                 expires_at.strftime("%Y-%m-%d %H:%M:%S"),
             )
+            return True
 
         except Exception as err:
             _LOGGER.error("Error saving session: %s", err)
+            return False
 
     def _write_session_file(self, session_data: dict[str, Any]) -> None:
         """Write session file to disk (runs in executor)."""
@@ -302,11 +307,13 @@ class SessionManager:
                 return False
 
             # Save with default user agent (user can update if needed)
-            await self.save_session(
+            saved = await self.save_session(
                 cookies=cookies,
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
                 download_token=None,
             )
+            if not saved:
+                return False
 
             _LOGGER.info("Manual cookies saved successfully (%d cookies)", len(cookies))
             return True

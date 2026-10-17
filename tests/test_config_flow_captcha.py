@@ -24,6 +24,7 @@ def mock_hass(tmp_path):
     hass.config_entries = Mock()
     hass.config_entries.async_entries.return_value = []
     hass.config.path.return_value = str(tmp_path / "esb_smart_meter")
+    hass.data = {}
     return hass
 
 
@@ -121,6 +122,47 @@ class TestOptionsFlow:
 
             assert result["type"] == "create_entry"
             mock_session.save_manual_cookies.assert_called_once_with(cookie_string)
+
+    @pytest.mark.asyncio
+    async def test_manual_cookies_keeps_existing_options(self, mock_hass, mock_config_entry):
+        """Saving cookies must not wipe the configured update interval."""
+        mock_config_entry.options = {CONF_UPDATE_INTERVAL: 6}
+        flow = ESBSmartMeterOptionsFlow(mock_config_entry)
+        flow.hass = mock_hass
+
+        with patch("custom_components.esb_smart_meter.config_flow.SessionManager") as mock_session_class:
+            mock_session_class.return_value.save_manual_cookies = AsyncMock(return_value=True)
+            result = await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: "a=1"})
+
+        assert result["type"] == "create_entry"
+        assert result["data"] == {CONF_UPDATE_INTERVAL: 6}
+
+    @pytest.mark.asyncio
+    async def test_manual_cookies_triggers_refresh(self, mock_hass, mock_config_entry):
+        """New cookies are used right away instead of after the 7-day CAPTCHA back-off."""
+        coordinator = Mock()
+        coordinator.async_request_refresh = AsyncMock()
+        mock_hass.data = {"esb_smart_meter": {mock_config_entry.entry_id: {"coordinator": coordinator}}}
+        flow = ESBSmartMeterOptionsFlow(mock_config_entry)
+        flow.hass = mock_hass
+
+        with patch("custom_components.esb_smart_meter.config_flow.SessionManager") as mock_session_class:
+            mock_session_class.return_value.save_manual_cookies = AsyncMock(return_value=True)
+            await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: "a=1"})
+
+        mock_hass.async_create_task.assert_called_once()
+        mock_hass.async_create_task.call_args.args[0].close()  # silence "never awaited"
+
+    @pytest.mark.asyncio
+    async def test_update_interval_keeps_other_options(self, mock_hass, mock_config_entry):
+        """Changing the interval keeps unrelated options."""
+        mock_config_entry.options = {"some_other_option": True}
+        flow = ESBSmartMeterOptionsFlow(mock_config_entry)
+        flow.hass = mock_hass
+
+        result = await flow.async_step_update_interval(user_input={CONF_UPDATE_INTERVAL: 12})
+
+        assert result["data"] == {"some_other_option": True, CONF_UPDATE_INTERVAL: 12}
 
     @pytest.mark.asyncio
     async def test_manual_cookies_invalid(self, mock_hass, mock_config_entry):

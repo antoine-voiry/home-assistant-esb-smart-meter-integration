@@ -236,6 +236,12 @@ class TestSessionManager:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_save_manual_cookies_reports_write_failure(self, session_manager):
+        """A failed disk write must not be reported as success."""
+        with patch.object(session_manager, "_write_session_file", side_effect=OSError("disk full")):
+            assert await session_manager.save_manual_cookies("a=1; b=2") is False
+
+    @pytest.mark.asyncio
     async def test_save_manual_cookies_invalid(self, session_manager):
         """Test saving invalid cookie string."""
         cookie_string = "not a valid cookie string"
