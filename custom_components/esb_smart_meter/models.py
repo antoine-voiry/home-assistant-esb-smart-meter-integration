@@ -1,6 +1,7 @@
 """Data models for ESB Smart Meter integration."""
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
@@ -75,7 +76,7 @@ class ESBData:
                 elif READ_TYPE_EXPORT in read_type:
                     export_data.append((timestamp, value))
                 else:
-                    raise ValueError(f"Unrecognized Read Type in row: {row}")
+                    _LOGGER.warning("Skipping unrecognized Read Type '%s' in row: %s", row.get(CSV_COLUMN_READ_TYPE), row)
             except (ValueError, KeyError) as err:
                 _LOGGER.warning("Skipping invalid row: %s", err)
                 continue
@@ -129,6 +130,24 @@ class ESBData:
     def get_export_readings_since(self, *, since: datetime) -> list[dict[str, Any]]:
         """Get export readings since a specific datetime."""
         return self._readings_since(self._export_data, since)
+
+    def hourly_usage(self) -> list[tuple[datetime, float]]:
+        """Get usage readings aggregated into hourly (hour_start, kWh) buckets."""
+        return self._hourly(self._data)
+
+    def hourly_export(self) -> list[tuple[datetime, float]]:
+        """Get export readings aggregated into hourly (hour_start, kWh) buckets."""
+        return self._hourly(self._export_data)
+
+    @staticmethod
+    def _hourly(series: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
+        """Aggregate 30-minute readings into hourly buckets, ascending."""
+        buckets: dict[datetime, float] = defaultdict(float)
+        for timestamp, value in series:
+            # ESB timestamps are interval end times, so bucket by interval start
+            hour_start = (timestamp - timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
+            buckets[hour_start] += value
+        return sorted(buckets.items())
 
     @property
     def today(self) -> float:

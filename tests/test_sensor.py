@@ -1,7 +1,7 @@
 """Integration tests for sensor.py with coordinator pattern."""
 
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntry
@@ -28,6 +28,10 @@ from custom_components.esb_smart_meter.sensor import (
     ExportThisMonthSensor,
     ExportThisWeekSensor,
     ExportTodaySensor,
+    UsageHistorySensor,
+    ExportHistorySensor,
+    UsageTotalSensor,
+    ExportTotalSensor,
     async_setup_entry,
 )
 from tests.conftest import _async_create_task_handler
@@ -90,15 +94,15 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
-        """Test that setup_entry creates all 16 sensors (import, export, diagnostic)."""
+        """Test that setup_entry creates all 20 sensors (period, export, history, total, diagnostic)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # Verify 16 sensors were created (12 data + 4 diagnostic)
+        # Verify 20 sensors were created (12 period + 2 history + 2 total + 4 diagnostic)
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 16
+        assert len(sensors) == 20
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -113,11 +117,16 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[9], ExportLast7DaysSensor)
         assert isinstance(sensors[10], ExportThisMonthSensor)
         assert isinstance(sensors[11], ExportLast30DaysSensor)
+        # History (statistics) and their display totals
+        assert isinstance(sensors[12], UsageHistorySensor)
+        assert isinstance(sensors[13], ExportHistorySensor)
+        assert isinstance(sensors[14], UsageTotalSensor)
+        assert isinstance(sensors[15], ExportTotalSensor)
         # Diagnostic sensors
-        assert isinstance(sensors[12], LastUpdateSensor)
-        assert isinstance(sensors[13], ApiStatusSensor)
-        assert isinstance(sensors[14], DataAgeSensor)
-        assert isinstance(sensors[15], CircuitBreakerStatusSensor)
+        assert isinstance(sensors[16], LastUpdateSensor)
+        assert isinstance(sensors[17], ApiStatusSensor)
+        assert isinstance(sensors[18], DataAgeSensor)
+        assert isinstance(sensors[19], CircuitBreakerStatusSensor)
 
 
 class TestBaseSensor:
@@ -182,6 +191,49 @@ class TestBaseSensor:
         assert export_sensor.native_value == 0.5
         assert import_sensor.native_value == 1.5
         assert export_sensor.unique_id == "12345678901_export_today"
+
+    def test_history_sensor_config(self, mock_coordinator):
+        """Test history sensor id; it stays stateless (no auto-compiled stats)."""
+        usage_history = UsageHistorySensor(coordinator=mock_coordinator, mprn="12345678901")
+
+        assert usage_history.unique_id == "12345678901_usage_history"
+        # No state_class, so the recorder won't auto-compile a competing statistics series
+        assert usage_history.state_class is None
+        assert usage_history.native_value is None
+
+    def test_total_sensor_config(self, mock_coordinator):
+        """Test the display total sensor id and that it carries no statistics."""
+        usage_history = UsageHistorySensor(coordinator=mock_coordinator, mprn="12345678901")
+        usage_total = UsageTotalSensor(
+            coordinator=mock_coordinator, mprn="12345678901", history=usage_history
+        )
+
+        assert usage_total.unique_id == "12345678901_usage_total"
+        # Display only: no state_class means no auto-compiled statistics for this entity
+        assert usage_total.state_class is None
+        assert usage_total.native_value is None
+
+    @pytest.mark.asyncio
+    async def test_history_import_updates_total(self, mock_coordinator):
+        """Test importing history refreshes the paired total sensor's value."""
+        usage_history = UsageHistorySensor(coordinator=mock_coordinator, mprn="12345678901")
+        usage_total = UsageTotalSensor(
+            coordinator=mock_coordinator, mprn="12345678901", history=usage_history
+        )
+        usage_history.hass = MagicMock()
+        usage_history.entity_id = "sensor.esb_electricity_usage_history"
+        usage_total.hass = MagicMock()
+        usage_total.async_write_ha_state = Mock()
+
+        with patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics",
+            new=AsyncMock(return_value=6.641),
+        ) as mock_import:
+            await usage_history._async_import_statistics()
+
+        mock_import.assert_awaited_once()
+        assert usage_total.native_value == 6.641
+        usage_total.async_write_ha_state.assert_called_once()
 
     @pytest.mark.parametrize(
         "sensor_cls, prop",
@@ -461,14 +513,14 @@ class TestLastUpdateSensor:
         assert sensor.native_value is None
 
     def test_native_value_datetime(self, mock_coordinator):
-        """Test Last Update sensor returns isoformat when last_successful_update_time is datetime."""
+        """Test Last Update sensor returns datetime."""
         from datetime import datetime, timezone
 
         test_time = datetime(2024, 12, 31, 12, 30, 0, tzinfo=timezone.utc)
         mock_coordinator.last_successful_update_time = test_time
         sensor = LastUpdateSensor(coordinator=mock_coordinator, mprn="12345678901")
 
-        assert sensor.native_value == test_time.isoformat()
+        assert sensor.native_value == test_time
 
 
 class TestApiStatusSensor:
