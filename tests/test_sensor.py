@@ -686,3 +686,24 @@ class TestCircuitBreakerStatusSensor:
         del mock_coordinator.esb_api._circuit_breaker._failure_count
         sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
         assert sensor.extra_state_attributes == {}
+
+
+PERIOD_SENSORS = [
+    TodaySensor, Last24HoursSensor, ThisWeekSensor, Last7DaysSensor, ThisMonthSensor, Last30DaysSensor,
+    ExportTodaySensor, ExportLast24HoursSensor, ExportThisWeekSensor, ExportLast7DaysSensor,
+    ExportThisMonthSensor, ExportLast30DaysSensor,
+]
+
+
+@pytest.mark.parametrize("sensor_cls", PERIOD_SENSORS)
+def test_period_sensor_has_no_state_class(sensor_cls):
+    """Moving windows must not compile long-term statistics (negative sums, #12)."""
+    sensor = sensor_cls(coordinator=MagicMock(spec=DataUpdateCoordinator), mprn="12345678901")
+    assert sensor.state_class is None
+
+
+@pytest.mark.parametrize("sensor_cls", PERIOD_SENSORS)
+def test_period_sensor_readings_not_recorded(sensor_cls):
+    """readings exceeds the recorder's 16 KB limit, which drops the unit too (#12)."""
+    sensor = sensor_cls(coordinator=MagicMock(spec=DataUpdateCoordinator), mprn="12345678901")
+    assert "readings" in sensor._unrecorded_attributes
