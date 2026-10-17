@@ -19,6 +19,10 @@ def _fake_ha(tmp_path: Path) -> Path:
     (config / "configuration.yaml").write_text("homeassistant:\n")
     (config / ".HA_VERSION").write_text("2026.10.1")
     (config / "custom_components" / "esb_smart_meter" / "stale.py").write_text("# old\n")
+    # Real-world layout: a stale nested copy with its own bytecode cache
+    nested_cache = config / "custom_components" / "esb_smart_meter" / "esb_smart_meter" / "__pycache__"
+    nested_cache.mkdir()
+    (nested_cache / "old.cpython-314.pyc").write_bytes(b"\0")
     return config
 
 

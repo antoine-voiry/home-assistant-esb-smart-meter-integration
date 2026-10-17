@@ -34,7 +34,7 @@ OLD_VERSION="none"
 [[ -f "$TARGET_DIR/manifest.json" ]] && OLD_VERSION="$(version "$TARGET_DIR/manifest.json")"
 echo "🚀 ESB Smart Meter $OLD_VERSION → $SRC_VERSION  (HA $(cat "$HA_CONFIG/.HA_VERSION"), $HA_CONFIG)"
 
-RSYNC_ARGS=(-a --delete --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store')
+RSYNC_ARGS=(-a --delete --delete-excluded --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store')
 if (( DRY_RUN )); then
   rsync "${RSYNC_ARGS[@]}" --dry-run --itemize-changes "$SOURCE_DIR/" "$TARGET_DIR/"
   echo "ℹ️  Dry run: nothing changed."
