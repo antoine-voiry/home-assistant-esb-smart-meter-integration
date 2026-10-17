@@ -1,6 +1,7 @@
 """Data models for ESB Smart Meter integration."""
 
 import logging
+import math
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
@@ -30,7 +31,6 @@ class ESBData:
                 _LOGGER.error(
                     "Expected columns: %s, %s, %s", CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_COLUMN_READ_TYPE
                 )
-                _LOGGER.error("First row data: %s", data[0])
                 raise ValueError(
                     f"Invalid CSV structure. Expected columns: "
                     f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}, {CSV_COLUMN_READ_TYPE}"
@@ -64,22 +64,35 @@ class ESBData:
         """Filter old data and split rows into import and export series."""
         import_data: list[tuple[datetime, float]] = []
         export_data: list[tuple[datetime, float]] = []
+        unknown_types: dict[str, int] = defaultdict(int)
+        invalid_values = 0
         for row in data:
             try:
                 timestamp = datetime.strptime(row[CSV_COLUMN_DATE], CSV_DATE_FORMAT)
                 if timestamp < cutoff_date:
                     continue
                 value = float(row[CSV_COLUMN_VALUE])
+                if not math.isfinite(value) or value < 0:
+                    invalid_values += 1
+                    continue
                 read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
                 if READ_TYPE_IMPORT in read_type:
                     import_data.append((timestamp, value))
                 elif READ_TYPE_EXPORT in read_type:
                     export_data.append((timestamp, value))
                 else:
-                    _LOGGER.warning("Skipping unrecognized Read Type '%s' in row: %s", row.get(CSV_COLUMN_READ_TYPE), row)
+                    unknown_types[read_type] += 1
             except (ValueError, KeyError) as err:
                 _LOGGER.warning("Skipping invalid row: %s", err)
                 continue
+        if unknown_types:
+            _LOGGER.warning(
+                "Skipped %d rows with unrecognized Read Type: %s",
+                sum(unknown_types.values()),
+                sorted(unknown_types),
+            )
+        if invalid_values:
+            _LOGGER.warning("Skipped %d rows with a non-finite or negative Read Value", invalid_values)
         return import_data, export_data
 
     @staticmethod

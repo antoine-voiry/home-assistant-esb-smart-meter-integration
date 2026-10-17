@@ -1,6 +1,8 @@
 """Tests for ESB Data manipulation."""
 
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -353,6 +355,35 @@ class TestESBData:
         esb_data = ESBData(data=data)
         assert esb_data.hourly_usage() == [(h, pytest.approx(1.5))]
         assert esb_data.hourly_export() == [(h, pytest.approx(0.5))]
+
+    def test_non_finite_and_negative_values_are_skipped(self):
+        """nan/inf/negative readings would poison cumulative statistics."""
+        ts = datetime.now().strftime("%d-%m-%Y %H:%M")
+        rt = "Active Import Interval (kWh)"
+        rows = [
+            {"Read Date and End Time": ts, "Read Value": value, "Read Type": rt}
+            for value in ("nan", "inf", "-1.0", "0.5")
+        ]
+        assert [value for _, value in ESBData(data=rows)._data] == [0.5]
+
+    def test_unrecognized_read_type_logged_once_without_row(self, caplog):
+        """One summary warning, never the row (it contains the MPRN)."""
+        ts = datetime.now().strftime("%d-%m-%Y %H:%M")
+        rows = [
+            {"Read Date and End Time": ts, "Read Value": "1.0", "Read Type": "Mystery", "MPRN": "12345678901"}
+            for _ in range(5)
+        ]
+        with caplog.at_level(logging.WARNING):
+            ESBData(data=rows)
+        messages = [r.getMessage() for r in caplog.records if "Read Type" in r.getMessage()]
+        assert len(messages) == 1
+        assert "12345678901" not in messages[0]
+        assert "5" in messages[0]
+
+    def test_invalid_structure_does_not_log_row_values(self, caplog):
+        with caplog.at_level(logging.ERROR), pytest.raises(ValueError):
+            ESBData(data=[{"Unexpected": "x", "MPRN": "12345678901"}])
+        assert "12345678901" not in caplog.text
 
     def test_get_export_readings_since(self):
         """Test get_export_readings_since returns only export readings."""
