@@ -707,3 +707,45 @@ def test_period_sensor_readings_not_recorded(sensor_cls):
     """readings exceeds the recorder's 16 KB limit, which drops the unit too (#12)."""
     sensor = sensor_cls(coordinator=MagicMock(spec=DataUpdateCoordinator), mprn="12345678901")
     assert "readings" in sensor._unrecorded_attributes
+
+
+class TestHistorySensorRefreshHooks:
+    """History sensors re-import statistics whenever the coordinator refreshes."""
+
+    def _sensor(self, data):
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.data = data
+        sensor = UsageHistorySensor(coordinator=coordinator, mprn="12345678901")
+        sensor.hass = MagicMock()
+        sensor.entity_id = "sensor.esb_electricity_usage_history"
+        return sensor
+
+    def test_coordinator_update_schedules_import(self):
+        sensor = self._sensor(data=None)
+        with patch.object(sensor, "async_write_ha_state"):
+            sensor._handle_coordinator_update()
+        sensor.hass.async_create_task.assert_called_once()
+        sensor.hass.async_create_task.call_args.args[0].close()
+
+    @pytest.mark.asyncio
+    async def test_import_skipped_without_data(self):
+        sensor = self._sensor(data=None)
+        with patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock()
+        ) as importer:
+            await sensor._async_import_statistics()
+        importer.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_added_to_hass_imports_immediately(self):
+        sensor = self._sensor(data=None)
+        with patch(
+            "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass", new=AsyncMock()
+        ), patch.object(sensor, "_async_import_statistics", new=AsyncMock()) as do_import:
+            await sensor.async_added_to_hass()
+        do_import.assert_awaited_once()
+
+    def test_history_sensor_is_stateless_and_on_device(self):
+        sensor = self._sensor(data=None)
+        assert sensor.native_value is None
+        assert (DOMAIN, "12345678901") in sensor.device_info["identifiers"]
