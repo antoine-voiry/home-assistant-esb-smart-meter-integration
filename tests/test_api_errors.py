@@ -415,9 +415,9 @@ class TestAPICSVParsingErrorPaths:
     def test_error_malformed_csv_rows(self, esb_api):
         """ERROR PATH: Test CSV with malformed rows."""
         csv_data = """Read Date and End Time,Read Value,Read Type,MPRN
-31-12-2024 00:30,1.5,Active Import,12345678901
+31-12-2024 00:30,1.5,Active Import Interval (kWh),12345678901
 This row is malformed
-31-12-2024 01:00,2.0,Active Import,12345678901"""
+31-12-2024 01:00,2.0,Active Import Interval (kWh),12345678901"""
 
         # Should parse valid rows and skip malformed
         result = esb_api._ESBDataApi__csv_to_dict(csv_data)
@@ -427,7 +427,7 @@ This row is malformed
     def test_error_csv_with_unicode(self, esb_api):
         """CORNER: Test CSV with Unicode characters."""
         csv_data = """Read Date and End Time,Read Value,Read Type,MPRN
-31-12-2024 00:30,1.5,Active Import,12345678901
+31-12-2024 00:30,1.5,Active Import Interval (kWh),12345678901
 Comment: Café ☕"""
 
         # Should handle Unicode without errors
@@ -437,7 +437,7 @@ Comment: Café ☕"""
     def test_error_csv_with_special_characters(self, esb_api):
         """CORNER: Test CSV with special characters."""
         csv_data = """Read Date and End Time,Read Value,Read Type,MPRN
-31-12-2024 00:30,"1,500.5",Active Import,12345678901"""
+31-12-2024 00:30,"1,500.5",Active Import Interval (kWh),12345678901"""
 
         # Should handle quoted values with commas
         result = esb_api._ESBDataApi__csv_to_dict(csv_data)

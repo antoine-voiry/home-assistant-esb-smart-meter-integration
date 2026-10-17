@@ -189,10 +189,10 @@ class TestAPISecurityDataValidation:
         """SECURITY: Test CSV injection attempts are handled safely."""
         # CSV with formula injection attempt
         malicious_csv = """Read Date and End Time,Read Value,Read Type,MPRN
-=1+1+cmd|'/c calc'!A1,1.5,Active Import,12345678901
-@SUM(1+1),2.0,Active Import,12345678901
-+1+1,3.0,Active Import,12345678901
--1+1,4.0,Active Import,12345678901"""
+=1+1+cmd|'/c calc'!A1,1.5,Active Import Interval (kWh),12345678901
+@SUM(1+1),2.0,Active Import Interval (kWh),12345678901
++1+1,3.0,Active Import Interval (kWh),12345678901
+-1+1,4.0,Active Import Interval (kWh),12345678901"""
 
         # Should parse without executing formulas
         result = esb_api._ESBDataApi__csv_to_dict(malicious_csv)

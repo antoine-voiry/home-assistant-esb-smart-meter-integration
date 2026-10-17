@@ -22,6 +22,12 @@ from custom_components.esb_smart_meter.sensor import (
     ThisMonthSensor,
     ThisWeekSensor,
     TodaySensor,
+    ExportLast7DaysSensor,
+    ExportLast24HoursSensor,
+    ExportLast30DaysSensor,
+    ExportThisMonthSensor,
+    ExportThisWeekSensor,
+    ExportTodaySensor,
     async_setup_entry,
 )
 from tests.conftest import _async_create_task_handler
@@ -34,14 +40,21 @@ class TestAsyncSetupEntry:
     def mock_coordinator(self):
         """Create mock coordinator."""
         coordinator = MagicMock(spec=DataUpdateCoordinator)
+        now_str = datetime.now().strftime("%d-%m-%Y %H:%M")
         coordinator.data = ESBData(
             data=[
                 {
-                    "Read Date and End Time": datetime.now().strftime("%d-%m-%Y %H:%M"),
+                    "Read Date and End Time": now_str,
                     "Read Value": "1.5",
-                    "Read Type": "Active Import",
+                    "Read Type": "Active Import Interval (kWh)",
                     "MPRN": "12345678901",
-                }
+                },
+                {
+                    "Read Date and End Time": now_str,
+                    "Read Value": "0.5",
+                    "Read Type": "Active Export Interval (kWh)",
+                    "MPRN": "12345678901",
+                },
             ]
         )
         coordinator.mprn = "12345678901"
@@ -77,15 +90,15 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
-        """Test that setup_entry creates all 10 sensors (including circuit breaker)."""
+        """Test that setup_entry creates all 16 sensors (import, export, diagnostic)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # Verify 10 sensors were created (6 data + 4 diagnostic sensors)
+        # Verify 16 sensors were created (12 data + 4 diagnostic)
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 10
+        assert len(sensors) == 16
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -94,11 +107,17 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[3], Last7DaysSensor)
         assert isinstance(sensors[4], ThisMonthSensor)
         assert isinstance(sensors[5], Last30DaysSensor)
+        assert isinstance(sensors[6], ExportTodaySensor)
+        assert isinstance(sensors[7], ExportLast24HoursSensor)
+        assert isinstance(sensors[8], ExportThisWeekSensor)
+        assert isinstance(sensors[9], ExportLast7DaysSensor)
+        assert isinstance(sensors[10], ExportThisMonthSensor)
+        assert isinstance(sensors[11], ExportLast30DaysSensor)
         # Diagnostic sensors
-        assert isinstance(sensors[6], LastUpdateSensor)
-        assert isinstance(sensors[7], ApiStatusSensor)
-        assert isinstance(sensors[8], DataAgeSensor)
-        assert isinstance(sensors[9], CircuitBreakerStatusSensor)
+        assert isinstance(sensors[12], LastUpdateSensor)
+        assert isinstance(sensors[13], ApiStatusSensor)
+        assert isinstance(sensors[14], DataAgeSensor)
+        assert isinstance(sensors[15], CircuitBreakerStatusSensor)
 
 
 class TestBaseSensor:
@@ -108,14 +127,21 @@ class TestBaseSensor:
     def mock_coordinator(self):
         """Create mock coordinator."""
         coordinator = MagicMock(spec=DataUpdateCoordinator)
+        now_str = datetime.now().strftime("%d-%m-%Y %H:%M")
         coordinator.data = ESBData(
             data=[
                 {
-                    "Read Date and End Time": datetime.now().strftime("%d-%m-%Y %H:%M"),
+                    "Read Date and End Time": now_str,
                     "Read Value": "1.5",
-                    "Read Type": "Active Import",
+                    "Read Type": "Active Import Interval (kWh)",
                     "MPRN": "12345678901",
-                }
+                },
+                {
+                    "Read Date and End Time": now_str,
+                    "Read Value": "0.5",
+                    "Read Type": "Active Export Interval (kWh)",
+                    "MPRN": "12345678901",
+                },
             ]
         )
         return coordinator
@@ -138,6 +164,50 @@ class TestBaseSensor:
         value = sensor.native_value
 
         assert value is None
+
+    def test_export_sensor_reads_export_only(self):
+        """Test export sensor reads export data, not import."""
+        ts = datetime.now().strftime("%d-%m-%Y %H:%M")
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.data = ESBData(
+            data=[
+                {"Read Date and End Time": ts, "Read Value": "1.5", "Read Type": "Active Import Interval (kWh)"},
+                {"Read Date and End Time": ts, "Read Value": "0.5", "Read Type": "Active Export Interval (kWh)"},
+            ]
+        )
+
+        export_sensor = ExportTodaySensor(coordinator=coordinator, mprn="12345678901")
+        import_sensor = TodaySensor(coordinator=coordinator, mprn="12345678901")
+
+        assert export_sensor.native_value == 0.5
+        assert import_sensor.native_value == 1.5
+        assert export_sensor.unique_id == "12345678901_export_today"
+
+    @pytest.mark.parametrize(
+        "sensor_cls, prop",
+        [
+            (ExportTodaySensor, "export_today"),
+            (ExportLast24HoursSensor, "export_last_24_hours"),
+            (ExportThisWeekSensor, "export_this_week"),
+            (ExportLast7DaysSensor, "export_last_7_days"),
+            (ExportThisMonthSensor, "export_this_month"),
+            (ExportLast30DaysSensor, "export_last_30_days"),
+        ],
+    )
+    def test_export_sensors_value_and_readings(self, sensor_cls, prop):
+        """Test export sensors read value and readings from export data."""
+        ts = datetime.now().strftime("%d-%m-%Y %H:%M")
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.data = ESBData(
+            data=[
+                {"Read Date and End Time": ts, "Read Value": "1.5", "Read Type": "Active Import Interval (kWh)"},
+                {"Read Date and End Time": ts, "Read Value": "0.5", "Read Type": "Active Export Interval (kWh)"},
+            ]
+        )
+        sensor = sensor_cls(coordinator=coordinator, mprn="12345678901")
+        assert sensor.native_value == getattr(coordinator.data, prop)
+        readings = sensor.extra_state_attributes["readings"]
+        assert readings == [{"timestamp": readings[0]["timestamp"], "value": 0.5}]
 
     def test_sensor_extra_state_attributes(self, mock_coordinator):
         """Test sensor extra state attributes contain readings."""
