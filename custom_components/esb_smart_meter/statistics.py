@@ -3,7 +3,6 @@
 import logging
 from datetime import datetime, timedelta
 
-import homeassistant.util.dt as dt_util
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import (
     StatisticData,
@@ -15,6 +14,8 @@ from homeassistant.components.recorder.statistics import (
     statistics_during_period,
 )
 from homeassistant.core import HomeAssistant
+
+from .models import DUBLIN_TZ
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ async def async_import_hourly_statistics(
     if not hourly:
         return None
 
-    localized = [(h.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE), kwh) for h, kwh in hourly]
+    # ESBData yields UTC-aware hours; naive input is treated as Irish local time
+    localized = [(h if h.tzinfo else h.replace(tzinfo=DUBLIN_TZ), kwh) for h, kwh in hourly]
     running_sum = await _baseline(hass, statistic_id, localized[0][0])
 
     stats: list[StatisticData] = []
