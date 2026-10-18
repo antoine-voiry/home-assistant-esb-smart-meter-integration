@@ -583,6 +583,18 @@ class TestDublinLabelValidation:
         assert esb._data == []
         assert "Skipped 3 rows" in caplog.text
 
+    @pytest.mark.parametrize("invalid", ["nan", "inf", "-1", "bad"])
+    def test_autumn_triple_with_invalid_value_is_refused_as_a_whole(self, invalid):
+        """Raw group cardinality is judged before the invalid value is excluded."""
+        rows = [
+            {"Read Date and End Time": "25-10-2026 01:30", "Read Value": value, "Read Type": self.IMPORT}
+            for value in ("1.0", "2.0", invalid)
+        ]
+
+        esb = self._read(rows)
+        assert esb._data == []
+        assert esb._export_data == []
+
     def test_repeated_label_cardinality_is_counted_per_read_type(self):
         """An import singleton must not consume the export pair for the same label."""
         rows = [

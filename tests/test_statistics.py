@@ -193,3 +193,74 @@ async def test_later_cutoff_preserves_complete_hours_and_suffix(recorder_mock, h
     assert [row["state"] for row in stats] == pytest.approx([0.75, 3.25])
     assert [row["sum"] for row in stats] == pytest.approx([0.75, 3.25])
     assert [row["change"] for row in stats] == pytest.approx([0.75, 2.5])
+
+
+def _three_complete_usage_hours():
+    """12:00Z, 13:00Z and 14:00Z complete hours with 1, 2 and 3 kWh."""
+    return _usage_rows(
+        ("16-04-2026 13:30", "0.5"),  # 12:30Z: first end of the 12:00Z hour
+        ("16-04-2026 14:00", "0.5"),  # 13:00Z: second end of the 12:00Z hour
+        ("16-04-2026 14:30", "1.0"),  # 13:30Z: first end of the 13:00Z hour
+        ("16-04-2026 15:00", "1.0"),  # 14:00Z: second end of the 13:00Z hour
+        ("16-04-2026 15:30", "1.5"),  # 14:30Z: first end of the 14:00Z hour
+        ("16-04-2026 16:00", "1.5"),  # 15:00Z: second end of the 14:00Z hour
+    )
+
+
+@pytest.mark.asyncio
+async def test_retained_internal_gap_preserves_later_state_sum_change(recorder_mock, hass, models_now):
+    """A stored hour omitted by the capture must stay in the later cumulative suffix."""
+    models_now.frozen = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    rows = _three_complete_usage_hours()
+
+    total = await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage())
+    await async_wait_recording_done(hass)
+    before = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
+    assert _starts(before) == [
+        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 16, 14, 0, tzinfo=timezone.utc),
+    ]
+    assert [row["state"] for row in before] == pytest.approx([1.0, 3.0, 6.0])
+    assert [row["sum"] for row in before] == pytest.approx([1.0, 3.0, 6.0])
+    assert [row["change"] for row in before] == pytest.approx([1.0, 2.0, 3.0])
+    assert total == pytest.approx(6.0)  # paired Total before the incomplete refresh
+
+    # The 14:30 label (13:30Z) is missing, so the 13:00Z hour is now incomplete.
+    incomplete = [row for row in rows if row["Read Date and End Time"] != "16-04-2026 14:30"]
+    total = await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=incomplete).hourly_usage())
+    await async_wait_recording_done(hass)
+    after = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
+    # The recorder keeps the stored 13:00Z row; later sums must still include its 2 kWh.
+    assert _starts(after) == [
+        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 16, 14, 0, tzinfo=timezone.utc),
+    ]
+    assert [row["state"] for row in after] == pytest.approx([1.0, 3.0, 6.0])
+    assert [row["sum"] for row in after] == pytest.approx([1.0, 3.0, 6.0])
+    assert [row["change"] for row in after] == pytest.approx([1.0, 2.0, 3.0])
+    assert total == pytest.approx(6.0)
+
+
+@pytest.mark.asyncio
+async def test_internal_gap_without_history_fabricates_no_energy(recorder_mock, hass, models_now):
+    """With no stored evidence the missing hour stays unknown: no row, no zero fill."""
+    models_now.frozen = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        row
+        for row in _three_complete_usage_hours()
+        if row["Read Date and End Time"] != "16-04-2026 14:30"
+    ]
+
+    total = await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage())
+    await async_wait_recording_done(hass)
+    stats = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
+
+    assert _starts(stats) == [
+        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 16, 14, 0, tzinfo=timezone.utc),
+    ]
+    assert [row["sum"] for row in stats] == pytest.approx([1.0, 4.0])  # 1 + 3 known kWh
+    assert [row["change"] for row in stats] == pytest.approx([1.0, 3.0])
+    assert total == pytest.approx(4.0)

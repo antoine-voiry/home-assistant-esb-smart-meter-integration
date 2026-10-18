@@ -83,36 +83,42 @@ class ESBData:
         if len(valid) > 1 and valid[0] > valid[-1]:
             ordered.reverse()
 
-        # First pass: validate rows and classify their Dublin wall-clock labels.
-        # Repeated autumn labels are counted per read type so an unresolved group
-        # can be refused as a whole rather than guessed from row order.
+        # First pass: recognize the read type and classify each Dublin wall-clock
+        # label before validating the numeric value, so an invalid value cannot
+        # shrink an autumn label group that must be judged as a whole.
         prepared: list[tuple[datetime, float, str, str]] = []
         repeated: dict[tuple[str, datetime], int] = defaultdict(int)
+        admitted_repeated: dict[tuple[str, datetime], int] = defaultdict(int)
         for row, label in ordered:
-            try:
-                if label is None:
-                    raise ValueError(f"unparseable date {row.get(CSV_COLUMN_DATE)!r}")
-                value = float(row[CSV_COLUMN_VALUE])
-                if not math.isfinite(value) or value < 0:
-                    invalid_values += 1
-                    continue
-                read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
-                if READ_TYPE_IMPORT in read_type:
-                    series = READ_TYPE_IMPORT
-                elif READ_TYPE_EXPORT in read_type:
-                    series = READ_TYPE_EXPORT
-                else:
-                    unknown_types[read_type] += 1
-                    continue
-            except (ValueError, KeyError) as err:
-                _LOGGER.warning("Skipping invalid row: %s", err)
+            if label is None:
+                _LOGGER.warning("Skipping invalid row: unparseable date %r", row.get(CSV_COLUMN_DATE))
+                continue
+            read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
+            if READ_TYPE_IMPORT in read_type:
+                series = READ_TYPE_IMPORT
+            elif READ_TYPE_EXPORT in read_type:
+                series = READ_TYPE_EXPORT
+            else:
+                unknown_types[read_type] += 1
                 continue
             kind = self._classify_label(label)
             if kind == "nonexistent":
                 nonexistent_labels += 1
                 continue
             if kind == "repeated":
+                # Count every recognized occurrence, even one whose value is
+                # later rejected, so a three-or-more-row group is refused whole.
                 repeated[(series, label)] += 1
+            try:
+                value = float(row[CSV_COLUMN_VALUE])
+                if not math.isfinite(value) or value < 0:
+                    invalid_values += 1
+                    continue
+            except (ValueError, KeyError) as err:
+                _LOGGER.warning("Skipping invalid row: %s", err)
+                continue
+            if kind == "repeated":
+                admitted_repeated[(series, label)] += 1
             prepared.append((label, value, series, kind))
 
         # Second pass: resolve admitted labels to UTC, refusing repeated labels
@@ -122,7 +128,9 @@ class ESBData:
         for label, value, series, kind in prepared:
             if kind == "repeated":
                 key = (series, label)
-                if repeated[key] != 2:
+                # The raw group must be exactly two rows and both folds must
+                # survive numeric validation; otherwise refuse the whole group.
+                if repeated[key] != 2 or admitted_repeated[key] != 2:
                     refused_repeated += 1
                     continue
                 fold = seen_repeated[key]
