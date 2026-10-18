@@ -108,3 +108,19 @@ def test_refuses_uncommitted_changes_without_override(tmp_path):
     # Without git metadata the dirty check cannot pass silently: it must fail closed
     assert result.returncode != 0
     assert "Uncommitted changes" in result.stderr
+
+
+def test_undeletable_stale_items_warn_but_deploy_succeeds(tmp_path):
+    """Samba hides vetoed '._*' files, so stale folders can refuse deletion."""
+    config = _fake_ha(tmp_path)
+    stuck = config / "custom_components" / "esb_smart_meter" / "esb_smart_meter"
+    (stuck / "hidden").write_text("vetoed\n")
+    stuck.chmod(0o555)
+    try:
+        result = _run(config)
+    finally:
+        stuck.chmod(0o755)
+    assert result.returncode == 0, result.stderr
+    assert "could not remove some items" in result.stderr
+    target = config / "custom_components" / "esb_smart_meter"
+    assert json.loads((target / "manifest.json").read_text())["version"] == _source_version()

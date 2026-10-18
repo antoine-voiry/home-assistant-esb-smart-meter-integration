@@ -34,9 +34,24 @@ OLD_VERSION="none"
 [[ -f "$TARGET_DIR/manifest.json" ]] && OLD_VERSION="$(version "$TARGET_DIR/manifest.json")"
 echo "🚀 ESB Smart Meter $OLD_VERSION → $SRC_VERSION  (HA $(cat "$HA_CONFIG/.HA_VERSION"), $HA_CONFIG)"
 
-RSYNC_ARGS=(-a --delete --delete-excluded --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store')
+# --inplace: the HA Samba add-on vetoes names starting with "._", and rsync's
+# temp files for __init__.py (".__init__.py.XXXX") would match that pattern.
+RSYNC_ARGS=(-a --inplace --delete --delete-excluded --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store')
+
+# rsync exit 23/24 = some items could not be transferred/deleted. On Samba this is
+# usually a folder holding hidden, vetoed "._*" files; the version check below
+# still proves the integration itself was copied.
+run_rsync() {
+  local rc=0
+  rsync "$@" || rc=$?
+  if (( rc == 23 || rc == 24 )); then
+    echo "⚠️  rsync could not remove some items (often hidden Samba '._*' files); continuing." >&2
+  elif (( rc != 0 )); then
+    fail "rsync failed (exit $rc)."
+  fi
+}
 if (( DRY_RUN )); then
-  rsync "${RSYNC_ARGS[@]}" --dry-run --itemize-changes "$SOURCE_DIR/" "$TARGET_DIR/"
+  run_rsync "${RSYNC_ARGS[@]}" --dry-run --itemize-changes "$SOURCE_DIR/" "$TARGET_DIR/"
   echo "ℹ️  Dry run: nothing changed."
   exit 0
 fi
@@ -44,18 +59,18 @@ fi
 if [[ -d "$TARGET_DIR" ]]; then
   BACKUP="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$OLD_VERSION"
   mkdir -p "$BACKUP_ROOT"
-  rsync -a --exclude '__pycache__/' "$TARGET_DIR/" "$BACKUP/"
+  run_rsync -a --inplace --exclude '__pycache__/' --exclude '._*' "$TARGET_DIR/" "$BACKUP/"
   echo "💾 Backup: $BACKUP"
   # Keep only the newest $KEEP_BACKUPS backups (portable: works with BSD and GNU tools)
   ls -1d "$BACKUP_ROOT"/*/ 2>/dev/null | sort \
     | awk -v keep="$KEEP_BACKUPS" '{a[NR]=$0} END{for(i=1;i<=NR-keep;i++) print a[i]}' \
-    | while IFS= read -r old; do rm -rf "$old"; done
+    | while IFS= read -r old; do rm -rf "$old" 2>/dev/null || echo "⚠️  Could not fully remove old backup $old" >&2; done
 fi
 
 mkdir -p "$TARGET_DIR"
-rsync "${RSYNC_ARGS[@]}" "$SOURCE_DIR/" "$TARGET_DIR/"
+run_rsync "${RSYNC_ARGS[@]}" "$SOURCE_DIR/" "$TARGET_DIR/"
 # Drop stale bytecode so HA recompiles from the new sources
-find "$TARGET_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} +
+find "$TARGET_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 [[ "$(version "$TARGET_DIR/manifest.json")" == "$SRC_VERSION" ]] || fail "Version check failed after copy."
 echo "✅ Deployed $SRC_VERSION. Restart Home Assistant to load it (Settings → System → Restart)."
