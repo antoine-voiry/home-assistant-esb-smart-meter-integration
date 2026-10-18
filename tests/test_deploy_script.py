@@ -111,16 +111,49 @@ def test_refuses_uncommitted_changes_without_override(tmp_path):
 
 
 def test_undeletable_stale_items_warn_but_deploy_succeeds(tmp_path):
-    """Samba hides vetoed '._*' files, so stale folders can refuse deletion."""
+    """Samba hides vetoed '._*' files, so rsync can report exit 23 (items not deleted)."""
     config = _fake_ha(tmp_path)
-    stuck = config / "custom_components" / "esb_smart_meter" / "esb_smart_meter"
-    (stuck / "hidden").write_text("vetoed\n")
-    stuck.chmod(0o555)
-    try:
-        result = _run(config)
-    finally:
-        stuck.chmod(0o755)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_rsync = fake_bin / "rsync"
+    # Run the real rsync, then report "some files could not be transferred/deleted"
+    fake_rsync.write_text(f'#!/bin/sh\n"{shutil.which("rsync")}" "$@"\nexit 23\n')
+    fake_rsync.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=REPO,
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+            "HA_CONFIG": str(config),
+            "DEPLOY_ALLOW_DIRTY": "1",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
     assert "could not remove some items" in result.stderr
     target = config / "custom_components" / "esb_smart_meter"
     assert json.loads((target / "manifest.json").read_text())["version"] == _source_version()
+
+
+def test_other_rsync_failures_abort(tmp_path):
+    config = _fake_ha(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "rsync").write_text("#!/bin/sh\nexit 12\n")
+    (fake_bin / "rsync").chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        cwd=REPO,
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+            "HA_CONFIG": str(config),
+            "DEPLOY_ALLOW_DIRTY": "1",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "rsync failed (exit 12)" in result.stderr
