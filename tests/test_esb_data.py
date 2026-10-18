@@ -344,19 +344,23 @@ class TestESBData:
             {"Read Date and End Time": ts(h + timedelta(minutes=30)), "Read Value": "0.1", "Read Type": rt},
             {"Read Date and End Time": ts(h + timedelta(minutes=60)), "Read Value": "0.2", "Read Type": rt},
             {"Read Date and End Time": ts(h + timedelta(minutes=90)), "Read Value": "0.4", "Read Type": rt},
+            {"Read Date and End Time": ts(h + timedelta(minutes=120)), "Read Value": "0.5", "Read Type": rt},
         ]
         buckets = ESBData(data=data).hourly_usage()
         h_utc = h.replace(tzinfo=DUBLIN_TZ).astimezone(timezone.utc)
-        # end 00:30 + 01:00 fall in hour h; end 01:30 falls in hour h+1
-        assert buckets == [(h_utc, pytest.approx(0.3)), (h_utc + timedelta(hours=1), pytest.approx(0.4))]
+        # Both interval ends of each hour are present, so both hours are complete.
+        assert buckets == [(h_utc, pytest.approx(0.3)), (h_utc + timedelta(hours=1), pytest.approx(0.9))]
 
     def test_hourly_export_separate_from_usage(self):
         """Test hourly buckets keep export separate from usage."""
         h = (_dublin_now() - timedelta(hours=3)).replace(minute=0, second=0, microsecond=0)
-        ts = (h + timedelta(minutes=30)).strftime("%d-%m-%Y %H:%M")
+        first = (h + timedelta(minutes=30)).strftime("%d-%m-%Y %H:%M")
+        second = (h + timedelta(minutes=60)).strftime("%d-%m-%Y %H:%M")
         data = [
-            {"Read Date and End Time": ts, "Read Value": "1.5", "Read Type": "Active Import Interval (kWh)"},
-            {"Read Date and End Time": ts, "Read Value": "0.5", "Read Type": "Active Export Interval (kWh)"},
+            {"Read Date and End Time": first, "Read Value": "0.7", "Read Type": "Active Import Interval (kWh)"},
+            {"Read Date and End Time": second, "Read Value": "0.8", "Read Type": "Active Import Interval (kWh)"},
+            {"Read Date and End Time": first, "Read Value": "0.2", "Read Type": "Active Export Interval (kWh)"},
+            {"Read Date and End Time": second, "Read Value": "0.3", "Read Type": "Active Export Interval (kWh)"},
         ]
         esb_data = ESBData(data=data)
         h_utc = h.replace(tzinfo=DUBLIN_TZ).astimezone(timezone.utc)
@@ -388,10 +392,12 @@ class TestESBData:
     def test_march_gap_has_no_phantom_hour(self):
         rt = "Active Import Interval (kWh)"
         labels_newest_first = [
+            ("30-03-2025 03:00", "0.5"),
             ("30-03-2025 02:30", "0.4"),
             ("30-03-2025 02:00", "0.3"),
             ("30-03-2025 00:30", "0.2"),
             ("30-03-2025 00:00", "0.1"),
+            ("29-03-2025 23:30", "0.05"),
         ]
         rows = [{"Read Date and End Time": d, "Read Value": v, "Read Type": rt} for d, v in labels_newest_first]
         with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
@@ -399,9 +405,9 @@ class TestESBData:
 
         utc = timezone.utc
         assert esb.hourly_usage() == [
-            (datetime(2025, 3, 29, 23, 0, tzinfo=utc), pytest.approx(0.1)),
+            (datetime(2025, 3, 29, 23, 0, tzinfo=utc), pytest.approx(0.05 + 0.1)),
             (datetime(2025, 3, 30, 0, 0, tzinfo=utc), pytest.approx(0.2 + 0.3)),  # 00:30 GMT end + 02:00 IST end
-            (datetime(2025, 3, 30, 1, 0, tzinfo=utc), pytest.approx(0.4)),
+            (datetime(2025, 3, 30, 1, 0, tzinfo=utc), pytest.approx(0.4 + 0.5)),
         ]
 
     def test_non_finite_and_negative_values_are_skipped(self):
@@ -473,3 +479,131 @@ class TestESBData:
         readings = esb_data.get_readings_since(since=now - timedelta(hours=12))
         # Readings are returned in chronological order (oldest first)
         assert [r["value"] for r in readings] == [3.0, 5.0]
+
+
+def _import_rows(*labels_and_values):
+    """Build ESB import rows from (Dublin wall-clock label, value) pairs."""
+    return [
+        {"Read Date and End Time": label, "Read Value": value, "Read Type": "Active Import Interval (kWh)"}
+        for label, value in labels_and_values
+    ]
+
+
+class TestCompleteHourAdmission:
+    """The History path admits only hours whose two 30-minute ends are present."""
+
+    def test_rolling_cutoff_refuses_partial_leading_hour(self, models_now):
+        """A cutoff inside the 12:00Z hour must not publish its leftover half.
+
+        The 13:00Z hour is complete on both runs; the 12:00Z hour keeps only its
+        second half inside the window, so importing it would lower that stored
+        hour and shift every later cumulative sum.
+        """
+        rows = _import_rows(
+            ("16-04-2026 15:30", "0.9"),  # 14:30Z: only the first end of the 14:00Z hour
+            ("16-04-2026 15:00", "2.0"),  # 14:00Z: second end of the 13:00Z hour
+            ("16-04-2026 14:30", "1.0"),  # 13:30Z: first end of the 13:00Z hour
+            ("16-04-2026 14:00", "0.5"),  # 13:00Z: second end of the 12:00Z hour, kept
+            ("16-04-2026 13:30", "0.5"),  # 12:30Z: first end of the 12:00Z hour, cut off
+            ("16-04-2026 13:00", "0.25"),  # 12:00Z: already outside the 90-day window
+        )
+
+        assert ESBData(data=rows).hourly_usage() == [
+            (datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc), pytest.approx(3.0))
+        ]
+
+    def test_trailing_incomplete_hour_is_not_published(self, models_now):
+        """The current hour is admitted only once its second end arrives."""
+        rows = _import_rows(
+            ("15-07-2026 13:30", "0.9"),  # 12:30Z: only the first end of the 12:00Z hour
+            ("15-07-2026 13:00", "0.6"),  # 12:00Z: second end of the 11:00Z hour
+            ("15-07-2026 12:30", "0.4"),  # 11:30Z: first end of the 11:00Z hour
+        )
+
+        assert ESBData(data=rows).hourly_usage() == [
+            (datetime(2026, 7, 15, 11, 0, tzinfo=timezone.utc), pytest.approx(1.0))
+        ]
+
+
+class TestDublinLabelValidation:
+    """Nonexistent and unresolved repeated Dublin labels are refused, not guessed."""
+
+    IMPORT = "Active Import Interval (kWh)"
+    EXPORT = "Active Export Interval (kWh)"
+
+    @staticmethod
+    def _read(rows):
+        """Parse rows with the 90-day window widened past the synthetic dates."""
+        with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
+            return ESBData(data=rows)
+
+    def test_nonexistent_spring_labels_are_refused(self):
+        """29-03-2026 01:00/01:30 never occur locally, so they cannot be UTC hours."""
+        rows = [
+            {"Read Date and End Time": "29-03-2026 02:30", "Read Value": "0.4", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "29-03-2026 02:00", "Read Value": "0.3", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "29-03-2026 01:30", "Read Value": "9.0", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "29-03-2026 01:00", "Read Value": "9.0", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "29-03-2026 00:30", "Read Value": "0.2", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "29-03-2026 00:00", "Read Value": "0.1", "Read Type": self.IMPORT},
+        ]
+
+        utc = timezone.utc
+        assert self._read(rows)._data == [
+            (datetime(2026, 3, 29, 0, 0, tzinfo=utc), 0.1),  # 00:00 GMT end
+            (datetime(2026, 3, 29, 0, 30, tzinfo=utc), 0.2),  # 00:30 GMT end
+            (datetime(2026, 3, 29, 1, 0, tzinfo=utc), 0.3),  # 02:00 IST end
+            (datetime(2026, 3, 29, 1, 30, tzinfo=utc), 0.4),  # 02:30 IST end
+        ]
+
+    def test_autumn_singleton_label_is_refused(self):
+        """A lone fall-back label carries no fold discriminator."""
+        rows = [
+            {"Read Date and End Time": "25-10-2026 01:30", "Read Value": "9.0", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "25-10-2026 01:00", "Read Value": "0.3", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "25-10-2026 01:00", "Read Value": "0.2", "Read Type": self.IMPORT},
+        ]
+
+        utc = timezone.utc
+        assert self._read(rows)._data == [
+            (datetime(2026, 10, 25, 0, 0, tzinfo=utc), 0.2),  # IST pass
+            (datetime(2026, 10, 25, 1, 0, tzinfo=utc), 0.3),  # GMT pass
+        ]
+
+    def test_autumn_triple_label_group_is_refused_as_a_whole(self, caplog):
+        """Three rows for one label are not a pair: none of them may be kept."""
+        rows = [
+            {"Read Date and End Time": "25-10-2026 01:30", "Read Value": value, "Read Type": self.IMPORT}
+            for value in ("1.0", "2.0", "3.0")
+        ]
+
+        with caplog.at_level(logging.WARNING):
+            esb = self._read(rows)
+
+        assert esb._data == []
+        assert "Skipped 3 rows" in caplog.text
+
+    def test_repeated_label_cardinality_is_counted_per_read_type(self):
+        """An import singleton must not consume the export pair for the same label."""
+        rows = [
+            {"Read Date and End Time": "25-10-2026 01:00", "Read Value": "9.0", "Read Type": self.IMPORT},
+            {"Read Date and End Time": "25-10-2026 01:00", "Read Value": "0.4", "Read Type": self.EXPORT},
+            {"Read Date and End Time": "25-10-2026 01:00", "Read Value": "0.6", "Read Type": self.EXPORT},
+        ]
+
+        utc = timezone.utc
+        esb = self._read(rows)
+        assert esb._data == []
+        assert esb._export_data == [
+            (datetime(2026, 10, 25, 0, 0, tzinfo=utc), 0.4),
+            (datetime(2026, 10, 25, 1, 0, tzinfo=utc), 0.6),
+        ]
+
+    def test_ordinary_winter_duplicate_labels_keep_existing_policy(self):
+        """Only DST-repeated labels are grouped; ordinary duplicates are untouched."""
+        rows = [
+            {"Read Date and End Time": "15-01-2026 12:00", "Read Value": value, "Read Type": self.IMPORT}
+            for value in ("1.0", "2.0", "3.0")
+        ]
+
+        assert [value for _, value in self._read(rows)._data] == [1.0, 2.0, 3.0]
