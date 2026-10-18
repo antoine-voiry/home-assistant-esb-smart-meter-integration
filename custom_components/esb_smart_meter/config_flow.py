@@ -1,6 +1,7 @@
 """Config flow for ESB Smart Meter integration."""
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -79,6 +80,29 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={"mprn_format": "11-digit MPRN number"},
         )
 
+    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> FlowResult:
+        """Start re-authentication after ESB rejected the stored credentials."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Ask for the new ESB password and reload the entry with it."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            password = user_input[CONF_PASSWORD]
+            if not password.strip():
+                errors[CONF_PASSWORD] = "empty_password"
+            else:
+                return self.async_update_reload_and_abort(entry, data_updates={CONF_PASSWORD: password})
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            errors=errors,
+            description_placeholders={"username": entry.data[CONF_USERNAME]},
+        )
+
 
 class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for ESB Smart Meter integration."""
@@ -136,10 +160,10 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
 
                 if success:
                     _LOGGER.info("Manual cookies saved successfully for MPRN %s", mprn)
-                    entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
-                    if entry_data:
+                    if self._config_entry.state is config_entries.ConfigEntryState.LOADED:
                         # Use the new cookies now rather than after the CAPTCHA back-off interval
-                        self.hass.async_create_task(entry_data["coordinator"].async_request_refresh())
+                        coordinator = self._config_entry.runtime_data.coordinator
+                        self.hass.async_create_task(coordinator.async_request_refresh())
                     return self.async_create_entry(title="", data=dict(self._config_entry.options))
 
                 _LOGGER.error("Failed to save manual cookies for MPRN %s", mprn)

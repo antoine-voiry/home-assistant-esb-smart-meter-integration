@@ -32,6 +32,10 @@ from .utils import get_human_like_delay, get_random_user_agent
 _LOGGER = logging.getLogger(__name__)
 
 
+class InvalidAuthException(Exception):
+    """Raised when ESB rejects the account email or password."""
+
+
 class ESBDataApi:
     """Class for handling the data retrieval from ESB using async aiohttp."""
 
@@ -200,7 +204,7 @@ class ESBDataApi:
                     if res_json.get("status") == "400" or "errorCode" in res_json:
                         error_msg = res_json.get("message", "The email or password is not correct.")
                         _LOGGER.error("Authentication failed: %s", error_msg)
-                        raise ValueError(f"Authentication failed: {error_msg}")
+                        raise InvalidAuthException(error_msg)
                 except json.JSONDecodeError:
                     # Mocks or legacy responses may return non-JSON, skip checking
                     pass
@@ -552,6 +556,11 @@ class ESBDataApi:
         except CaptchaRequiredException:
             # Don't record as circuit breaker failure - this requires user action
             _LOGGER.warning("CAPTCHA detected - user intervention required")
+            raise
+
+        except InvalidAuthException:
+            # Retrying won't help either; Home Assistant asks the user to re-authenticate
+            _LOGGER.warning("ESB rejected the account credentials - re-authentication required")
             raise
 
         except ValueError as err:

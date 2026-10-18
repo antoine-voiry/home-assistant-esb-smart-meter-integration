@@ -30,3 +30,12 @@ def test_captcha_repair_issue_is_translated():
     issue = _load("translations/en.json")["issues"]["captcha_required"]
     assert issue["title"].strip()
     assert "{mprn}" in issue["description"] and "{esb_url}" in issue["description"]
+
+
+def test_reauth_flow_is_translated():
+    config = _load("translations/en.json")["config"]
+    step = config["step"]["reauth_confirm"]
+    assert "{username}" in step["description"]
+    assert step["data"]["password"].strip()
+    assert config["abort"]["reauth_successful"].strip()
+    assert config["error"]["empty_password"].strip()

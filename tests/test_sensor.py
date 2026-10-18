@@ -1,15 +1,18 @@
 """Integration tests for sensor.py with coordinator pattern."""
 
+import json
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from custom_components.esb_smart_meter.const import DOMAIN
+from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.sensor import (
     ApiStatusSensor,
@@ -35,6 +38,8 @@ from custom_components.esb_smart_meter.sensor import (
     async_setup_entry,
 )
 from tests.conftest import _async_create_task_handler
+
+COMPONENT = Path(__file__).parent.parent / "custom_components" / "esb_smart_meter"
 
 
 class TestAsyncSetupEntry:
@@ -80,16 +85,16 @@ class TestAsyncSetupEntry:
     def mock_hass(self, mock_coordinator):
         """Create mock Home Assistant instance."""
         hass = MagicMock(spec=HomeAssistant)
-        hass.data = {DOMAIN: {"test_entry_id": {"coordinator": mock_coordinator}}}
         # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
-    def mock_config_entry(self):
+    def mock_config_entry(self, mock_coordinator):
         """Create mock config entry."""
         entry = MagicMock(spec=ConfigEntry)
         entry.entry_id = "test_entry_id"
+        entry.runtime_data = ESBRuntimeData(coordinator=mock_coordinator, session=MagicMock())
         return entry
 
     @pytest.mark.asyncio
@@ -127,6 +132,47 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[17], ApiStatusSensor)
         assert isinstance(sensors[18], DataAgeSensor)
         assert isinstance(sensors[19], CircuitBreakerStatusSensor)
+
+    @pytest.mark.asyncio
+    async def test_unique_ids_are_unchanged(self, mock_hass, mock_config_entry):
+        """Registry entries (and so entity ids and statistics) are keyed on these; never change them."""
+        async_add_entities = MagicMock()
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+        suffixes = [s.unique_id.removeprefix("12345678901_") for s in async_add_entities.call_args[0][0]]
+        assert suffixes == [
+            "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days",
+            "export_today", "export_last_24_hours", "export_this_week", "export_last_7_days",
+            "export_this_month", "export_last_30_days",
+            "usage_history", "export_history", "usage_total", "export_total",
+            "last_update", "api_status", "data_age", "circuit_breaker_status",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_sensors_use_translated_entity_names(self, mock_hass, mock_config_entry):
+        """Names come from translations under the device name, not hard-coded strings."""
+        names = json.loads((COMPONENT / "translations" / "en.json").read_text())["entity"]["sensor"]
+        async_add_entities = MagicMock()
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+        sensors = async_add_entities.call_args[0][0]
+        keys = [s.translation_key for s in sensors]
+        assert len(set(keys)) == len(sensors)
+        for sensor in sensors:
+            assert sensor.has_entity_name is True
+            assert not hasattr(sensor, "_attr_name"), type(sensor).__name__
+            assert names[sensor.translation_key]["name"].strip()
+
+    @pytest.mark.asyncio
+    async def test_status_sensors_are_diagnostic(self, mock_hass, mock_config_entry):
+        async_add_entities = MagicMock()
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+        sensors = async_add_entities.call_args[0][0]
+        diagnostic = (LastUpdateSensor, ApiStatusSensor, DataAgeSensor, CircuitBreakerStatusSensor)
+        for sensor in sensors:
+            expected = EntityCategory.DIAGNOSTIC if isinstance(sensor, diagnostic) else None
+            assert sensor.entity_category == expected, type(sensor).__name__
 
 
 class TestBaseSensor:
@@ -629,7 +675,7 @@ class TestCircuitBreakerStatusSensor:
     def test_sensor_init(self, mock_coordinator):
         """Test initialization."""
         sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
-        assert sensor._attr_name == "ESB Smart Meter: Circuit Breaker Status"
+        assert sensor.translation_key == "circuit_breaker_status"
         assert sensor._attr_unique_id == "12345678901_circuit_breaker_status"
 
     def test_native_value_closed(self, mock_coordinator):

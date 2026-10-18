@@ -12,6 +12,13 @@
         "data_description": {
           "mprn": "Your 11-digit Meter Point Reference Number"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate ESB Networks",
+        "description": "ESB Networks rejected the password for {username}. Enter your current ESB Networks password.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -19,10 +26,12 @@
       "mprn_exists": "This MPRN is already configured",
       "cannot_connect": "Failed to connect to ESB Networks",
       "invalid_auth": "Invalid username or password",
-      "unknown": "An unexpected error occurred"
+      "unknown": "An unexpected error occurred",
+      "empty_password": "Password cannot be empty"
     },
     "abort": {
-      "already_configured": "This MPRN is already configured"
+      "already_configured": "This MPRN is already configured",
+      "reauth_successful": "Re-authentication was successful"
     }
   },
   "options": {
@@ -64,6 +73,70 @@
     "captcha_required": {
       "title": "ESB Networks requires CAPTCHA verification",
       "description": "ESB Networks is asking for a CAPTCHA for meter {mprn}. Log in at {esb_url} in your browser, then open Settings → Devices & services → ESB Smart Meter → Configure → Provide Session Cookies and paste your cookies. Updates resume automatically once the cookies work."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "usage_today": {
+        "name": "Usage today"
+      },
+      "usage_last_24_hours": {
+        "name": "Usage last 24 hours"
+      },
+      "usage_this_week": {
+        "name": "Usage this week"
+      },
+      "usage_last_7_days": {
+        "name": "Usage last 7 days"
+      },
+      "usage_this_month": {
+        "name": "Usage this month"
+      },
+      "usage_last_30_days": {
+        "name": "Usage last 30 days"
+      },
+      "export_today": {
+        "name": "Export today"
+      },
+      "export_last_24_hours": {
+        "name": "Export last 24 hours"
+      },
+      "export_this_week": {
+        "name": "Export this week"
+      },
+      "export_last_7_days": {
+        "name": "Export last 7 days"
+      },
+      "export_this_month": {
+        "name": "Export this month"
+      },
+      "export_last_30_days": {
+        "name": "Export last 30 days"
+      },
+      "usage_history": {
+        "name": "Usage history"
+      },
+      "export_history": {
+        "name": "Export history"
+      },
+      "usage_total": {
+        "name": "Usage total"
+      },
+      "export_total": {
+        "name": "Export total"
+      },
+      "last_update": {
+        "name": "Last update"
+      },
+      "api_status": {
+        "name": "API status"
+      },
+      "data_age": {
+        "name": "Data age"
+      },
+      "circuit_breaker_status": {
+        "name": "Circuit breaker status"
+      }
     }
   }
 }

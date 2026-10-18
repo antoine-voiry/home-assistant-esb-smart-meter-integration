@@ -3,11 +3,13 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 
 from custom_components.esb_smart_meter.config_flow import (
     ESBSmartMeterConfigFlow,
     ESBSmartMeterOptionsFlow,
 )
+from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.const import (
     CONF_MANUAL_COOKIES,
     CONF_MPRN,
@@ -39,6 +41,7 @@ def mock_config_entry():
     }
     entry.entry_id = "test_entry_id"
     entry.options = {}  # Add options attribute
+    entry.state = ConfigEntryState.NOT_LOADED
     return entry
 
 
@@ -142,7 +145,8 @@ class TestOptionsFlow:
         """New cookies are used right away instead of after the 7-day CAPTCHA back-off."""
         coordinator = Mock()
         coordinator.async_request_refresh = AsyncMock()
-        mock_hass.data = {"esb_smart_meter": {mock_config_entry.entry_id: {"coordinator": coordinator}}}
+        mock_config_entry.state = ConfigEntryState.LOADED
+        mock_config_entry.runtime_data = ESBRuntimeData(coordinator=coordinator, session=Mock())
         flow = ESBSmartMeterOptionsFlow(mock_config_entry)
         flow.hass = mock_hass
 
@@ -152,6 +156,21 @@ class TestOptionsFlow:
 
         mock_hass.async_create_task.assert_called_once()
         mock_hass.async_create_task.call_args.args[0].close()  # silence "never awaited"
+
+    @pytest.mark.asyncio
+    async def test_manual_cookies_skip_refresh_when_entry_not_loaded(self, mock_hass, mock_config_entry):
+        """An unloaded entry keeps stale runtime_data (closed session); don't refresh through it."""
+        mock_config_entry.state = ConfigEntryState.NOT_LOADED
+        mock_config_entry.runtime_data = ESBRuntimeData(coordinator=Mock(), session=Mock())
+        flow = ESBSmartMeterOptionsFlow(mock_config_entry)
+        flow.hass = mock_hass
+
+        with patch("custom_components.esb_smart_meter.config_flow.SessionManager") as mock_session_class:
+            mock_session_class.return_value.save_manual_cookies = AsyncMock(return_value=True)
+            result = await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: "a=1"})
+
+        assert result["type"] == "create_entry"
+        mock_hass.async_create_task.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_interval_keeps_other_options(self, mock_hass, mock_config_entry):

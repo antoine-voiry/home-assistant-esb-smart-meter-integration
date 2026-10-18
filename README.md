@@ -36,6 +36,8 @@ A comprehensive Home Assistant integration for monitoring your electricity usage
 - **🔁 Robust Retry Logic**: 5 automatic retry attempts with 2-minute intervals on network failures
 - **⚡ Async Implementation**: Non-blocking async/await design using aiohttp for optimal Home Assistant performance
 - **🔐 Secure Authentication**: Handles ESB's complete 8-step OAuth2-like authentication flow
+- **🔑 Re-authentication**: If ESB rejects your password, Home Assistant asks for the new one instead of failing silently
+- **🩺 Diagnostics Download**: One-click diagnostics file for bug reports, with credentials and MPRN redacted
 - **📱 Device Grouping**: All sensors grouped under a single device in Home Assistant UI
 - **🆔 Unique Entity IDs**: Proper entity management with MPRN-based unique identifiers
 - **🔍 Comprehensive Logging**: Detailed debug logging for troubleshooting authentication and data retrieval
@@ -169,6 +171,17 @@ After successful setup, you'll have **sixteen energy sensors** created under a s
 
 **All sensors report in kilowatt-hours (kWh)** with the `⚡` icon.
 
+Sensor names are shown under the device name, e.g. **ESB Smart Meter (XXXXXXXXXXX) Usage today**.
+
+Four more sensors appear in the device's **Diagnostic** section:
+
+| Sensor Entity ID | Description |
+|-----------------|-------------|
+| `sensor.esb_smart_meter_last_update` | When data was last downloaded successfully |
+| `sensor.esb_smart_meter_api_status` | `online`, `error` or `unknown` |
+| `sensor.esb_smart_meter_data_age` | Hours since the last successful download |
+| `sensor.esb_smart_meter_circuit_breaker_status` | `closed`, `open` or `half_open` (login back-off after repeated failures) |
+
 ### Device Information
 
 All sensors are grouped under:
@@ -268,6 +281,10 @@ ESB Networks has implemented CAPTCHA protection on their login system. This inte
 
 **Symptoms**: Setup fails with "Invalid credentials" or authentication error
 
+**Changed your ESB password?** Home Assistant shows a **Re-authenticate** prompt under
+**Settings** → **Devices & Services** (and in **Repairs**) when ESB rejects the stored password.
+Click it, enter the new password, and the integration reloads. Polling stops until you do.
+
 **Solutions**:
 
 1. **Verify ESB Account Credentials**:
@@ -326,6 +343,14 @@ ESB Networks has implemented CAPTCHA protection on their login system. This inte
 2. Verify ESB website shows newer data
 3. Restart Home Assistant to force cache refresh
 4. Check for errors in logs preventing data updates
+
+### Downloading Diagnostics
+
+Attach this to bug reports. It contains the integration's state (last update, circuit breaker,
+how many readings were downloaded) with your email, password, MPRN and cookies redacted.
+
+1. Go to **Settings** → **Devices & Services** → **ESB Smart Meter**
+2. Open the **⋮** menu on the entry and choose **Download diagnostics**
 
 ### Enabling Debug Logging
 
@@ -392,21 +417,32 @@ The integration imports your readings into Home Assistant's long-term statistics
 despite ESB's 1-2 day delay. These are carried by two **History** sensors grouped
 under the device:
 
-- **ESB Electricity Usage: History** (`sensor.esb_electricity_usage_history`) — consumption
-- **ESB Electricity Export: History** (`sensor.esb_electricity_export_history`) — export to grid
+- **Usage history** (`sensor.esb_electricity_usage_history`) — consumption
+- **Export history** (`sensor.esb_electricity_export_history`) — export to grid
 
-They appear under the **ESB Smart Meter** device in the statistic picker (shown by their name above).
+They appear under the **ESB Smart Meter** device in the statistic picker, as
+**ESB Smart Meter (XXXXXXXXXXX) Usage history** and **… Export history**.
 
 1. Go to **Settings** → **Dashboards** → **Energy** → **Edit Dashboard**
 2. Click **Add grid connection**
-3. Set **Energy imported from grid** to **ESB Electricity Usage: History**
-4. If you export to the grid, set **Energy exported to grid** to **ESB Electricity Export: History**
+3. Set **Energy imported from grid** to **Usage history**
+4. If you export to the grid, set **Energy exported to grid** to **Export history**
 5. Configure tariff pricing if desired
 
 **Note**: Use the `*_history` sensors above (not the period `sensor.esb_electricity_usage_*`
 entities) for the Energy Dashboard — they carry the correct historic timestamps, so
 scrolling back to past dates shows real usage. Data appears 1-2 days after use because
 of ESB's publishing delay. The energy config page may show the History sensors as "Entity unavailable" — this is expected and harmless as they are intentionally stateless.
+
+### Upgrading from 1.3.x
+
+Sensor display names are now translated and shown under the device name: for example
+**ESB Electricity Usage: Today** becomes **ESB Smart Meter (XXXXXXXXXXX) Usage today**.
+**Entity IDs do not change**, so automations, templates and Energy dashboard
+statistics keep working. Names you set yourself in the UI are kept.
+
+The Last Update, API Status, Data Age and Circuit Breaker Status sensors move to the
+device's **Diagnostic** section.
 
 ### Upgrading to 1.3.8
 
