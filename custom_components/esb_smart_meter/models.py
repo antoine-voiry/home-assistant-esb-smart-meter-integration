@@ -1,9 +1,11 @@
 """Data models for ESB Smart Meter integration."""
 
 import logging
+import math
 from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 from .const import (
     CSV_COLUMN_DATE,
@@ -16,6 +18,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# ESB labels are interval-END wall-clock times in Irish local time
+DUBLIN_TZ = ZoneInfo("Europe/Dublin")
 
 
 class ESBData:
@@ -30,14 +35,13 @@ class ESBData:
                 _LOGGER.error(
                     "Expected columns: %s, %s, %s", CSV_COLUMN_DATE, CSV_COLUMN_VALUE, CSV_COLUMN_READ_TYPE
                 )
-                _LOGGER.error("First row data: %s", data[0])
                 raise ValueError(
                     f"Invalid CSV structure. Expected columns: "
                     f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}, {CSV_COLUMN_READ_TYPE}"
                 )
 
         # Filter out data older than MAX_DATA_AGE_DAYS to prevent memory leaks
-        cutoff_date = datetime.now() - timedelta(days=MAX_DATA_AGE_DAYS)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=MAX_DATA_AGE_DAYS)
         self._data, self._export_data = self._filter_and_parse_data(data, cutoff_date)
         _LOGGER.debug(
             "Loaded %d import / %d export rows (filtered data older than %d days)",
@@ -64,64 +68,118 @@ class ESBData:
         """Filter old data and split rows into import and export series."""
         import_data: list[tuple[datetime, float]] = []
         export_data: list[tuple[datetime, float]] = []
+        unknown_types: dict[str, int] = defaultdict(int)
+        invalid_values = 0
+        # ESB returns newest rows first; fold detection needs chronological order
+        parsed_labels: list[datetime | None] = []
         for row in data:
             try:
-                timestamp = datetime.strptime(row[CSV_COLUMN_DATE], CSV_DATE_FORMAT)
+                parsed_labels.append(datetime.strptime(row[CSV_COLUMN_DATE], CSV_DATE_FORMAT))
+            except (ValueError, KeyError):
+                parsed_labels.append(None)
+        valid = [label for label in parsed_labels if label is not None]
+        ordered = list(zip(data, parsed_labels))
+        if len(valid) > 1 and valid[0] > valid[-1]:
+            ordered.reverse()
+        seen_ambiguous: set[tuple[str, datetime]] = set()
+        for row, label in ordered:
+            try:
+                if label is None:
+                    raise ValueError(f"unparseable date {row.get(CSV_COLUMN_DATE)!r}")
+                value = float(row[CSV_COLUMN_VALUE])
+                if not math.isfinite(value) or value < 0:
+                    invalid_values += 1
+                    continue
+                read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
+                timestamp = self._localize(label, seen_ambiguous, read_type)
                 if timestamp < cutoff_date:
                     continue
-                value = float(row[CSV_COLUMN_VALUE])
-                read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
                 if READ_TYPE_IMPORT in read_type:
                     import_data.append((timestamp, value))
                 elif READ_TYPE_EXPORT in read_type:
                     export_data.append((timestamp, value))
                 else:
-                    _LOGGER.warning("Skipping unrecognized Read Type '%s' in row: %s", row.get(CSV_COLUMN_READ_TYPE), row)
+                    unknown_types[read_type] += 1
             except (ValueError, KeyError) as err:
                 _LOGGER.warning("Skipping invalid row: %s", err)
                 continue
+        import_data.sort(key=lambda item: item[0])
+        export_data.sort(key=lambda item: item[0])
+        if unknown_types:
+            _LOGGER.warning(
+                "Skipped %d rows with unrecognized Read Type: %s",
+                sum(unknown_types.values()),
+                sorted(unknown_types),
+            )
+        if invalid_values:
+            _LOGGER.warning("Skipped %d rows with a non-finite or negative Read Value", invalid_values)
         return import_data, export_data
 
     @staticmethod
-    def _sum_since(series: list[tuple[datetime, float]], since: datetime) -> float:
-        """Sum values in a series since a specific datetime."""
-        return sum(value for timestamp, value in series if timestamp >= since)
+    def _localize(naive: datetime, seen_ambiguous: set[tuple[str, datetime]], read_type: str) -> datetime:
+        """Resolve a Dublin wall-clock label to UTC.
+
+        On the October fall-back day the 01:00-02:00 labels occur twice; the first
+        occurrence in chronological order is summer time (fold=0), the second is
+        winter time (fold=1).
+        """
+        first = naive.replace(tzinfo=DUBLIN_TZ, fold=0)
+        second = naive.replace(tzinfo=DUBLIN_TZ, fold=1)
+        if first.utcoffset() == second.utcoffset():
+            return first.astimezone(timezone.utc)
+        key = (read_type, naive)
+        if key in seen_ambiguous:
+            return second.astimezone(timezone.utc)
+        seen_ambiguous.add(key)
+        return first.astimezone(timezone.utc)
 
     @staticmethod
-    def _readings_since(series: list[tuple[datetime, float]], since: datetime) -> list[dict[str, Any]]:
-        """Return readings in a series since a specific datetime."""
-        if since.tzinfo is not None:
-            since = since.replace(tzinfo=None)
+    def _as_utc(moment: datetime) -> datetime:
+        """Treat naive datetimes as Dublin local time and convert to UTC."""
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=DUBLIN_TZ)
+        return moment.astimezone(timezone.utc)
+
+    @classmethod
+    def _sum_since(cls, series: list[tuple[datetime, float]], since: datetime) -> float:
+        """Sum values in a series since a specific datetime."""
+        since_utc = cls._as_utc(since)
+        return sum(value for timestamp, value in series if timestamp >= since_utc)
+
+    @classmethod
+    def _readings_since(cls, series: list[tuple[datetime, float]], since: datetime) -> list[dict[str, Any]]:
+        """Return readings in a series since a specific datetime (Dublin local ISO timestamps)."""
+        since_utc = cls._as_utc(since)
         return [
-            {"timestamp": timestamp.isoformat(), "value": value}
+            {"timestamp": timestamp.astimezone(DUBLIN_TZ).isoformat(), "value": value}
             for timestamp, value in series
-            if timestamp >= since
+            if timestamp >= since_utc
         ]
 
     @staticmethod
     def start_of_today() -> datetime:
-        return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        return datetime.now(DUBLIN_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
 
     @staticmethod
     def since_24_hours() -> datetime:
-        return datetime.now() - timedelta(days=1)
+        return datetime.now(DUBLIN_TZ) - timedelta(days=1)
 
     @staticmethod
     def start_of_week() -> datetime:
-        now = datetime.now()
+        now = datetime.now(DUBLIN_TZ)
         return now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=now.weekday())
 
     @staticmethod
     def since_7_days() -> datetime:
-        return datetime.now() - timedelta(days=7)
+        return datetime.now(DUBLIN_TZ) - timedelta(days=7)
 
     @staticmethod
     def start_of_month() -> datetime:
-        return datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return datetime.now(DUBLIN_TZ).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     @staticmethod
     def since_30_days() -> datetime:
-        return datetime.now() - timedelta(days=30)
+        return datetime.now(DUBLIN_TZ) - timedelta(days=30)
 
     def get_readings_since(self, *, since: datetime) -> list[dict[str, Any]]:
         """Get import readings since a specific datetime."""

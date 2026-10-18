@@ -236,6 +236,12 @@ class TestSessionManager:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_save_manual_cookies_reports_write_failure(self, session_manager):
+        """A failed disk write must not be reported as success."""
+        with patch.object(session_manager, "_write_session_file", side_effect=OSError("disk full")):
+            assert await session_manager.save_manual_cookies("a=1; b=2") is False
+
+    @pytest.mark.asyncio
     async def test_save_manual_cookies_invalid(self, session_manager):
         """Test saving invalid cookie string."""
         cookie_string = "not a valid cookie string"
@@ -441,6 +447,30 @@ class TestSessionManager:
             )
             assert res is True
             mock_session.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_session_cookies_uses_real_cookie_jar(self, mock_hass):
+        """Regression #10: cookies must load into a real aiohttp CookieJar."""
+        import aiohttp
+
+        session_manager = SessionManager(mock_hass, "12345678901")
+        jar = aiohttp.CookieJar(unsafe=True)
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_response
+        mock_session.close = AsyncMock()
+        mock_session.cookie_jar = jar
+
+        with patch("custom_components.esb_smart_meter.session_manager.aiohttp.ClientSession", return_value=mock_session):
+            res = await session_manager.validate_session_cookies({"test_cookie": "value"}, "Mozilla/5.0")
+
+        assert res is True
+        assert {cookie.key for cookie in jar} == {"test_cookie"}
 
     @pytest.mark.asyncio
     async def test_validate_session_cookies_failure(self, mock_hass):

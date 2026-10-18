@@ -1,52 +1,79 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Deploy the ESB Smart Meter integration into a Home Assistant config directory.
+#
+#   ./deploy.sh             deploy (backup + mirror) to $HA_CONFIG (default /Volumes/config)
+#   ./deploy.sh --dry-run   show what would change, touch nothing
+#
+# The target is made an exact mirror of custom_components/esb_smart_meter
+# (files removed from the repo are removed from HA). A timestamped backup of
+# the previous install is kept in $HA_CONFIG/esb_smart_meter_backups/.
+set -euo pipefail
 
-# Deploy ESB Smart Meter Integration to Home Assistant
-# This script copies the custom component to the Home Assistant config volume
+HA_CONFIG="${HA_CONFIG:-/Volumes/config}"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)/custom_components/esb_smart_meter"
+TARGET_DIR="$HA_CONFIG/custom_components/esb_smart_meter"
+BACKUP_ROOT="$HA_CONFIG/esb_smart_meter_backups"
+KEEP_BACKUPS=5
+DRY_RUN=0
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
 
-set -e  # Exit on error
+fail() { echo "❌ $*" >&2; exit 1; }
 
-SOURCE_DIR="./custom_components/esb_smart_meter"
-TARGET_DIR="/Volumes/config/custom_components/esb_smart_meter"
+[[ -f "$SOURCE_DIR/manifest.json" ]] || fail "Source $SOURCE_DIR not found (run from the repo)."
+[[ -f "$HA_CONFIG/configuration.yaml" && -f "$HA_CONFIG/.HA_VERSION" ]] \
+  || fail "$HA_CONFIG is not a Home Assistant config directory (is the share mounted?)."
+command -v rsync >/dev/null || fail "rsync is required."
 
-echo "🚀 Deploying ESB Smart Meter Integration to Home Assistant..."
-
-# Check if source directory exists
-if [ ! -d "$SOURCE_DIR" ]; then
-    echo "❌ Error: Source directory $SOURCE_DIR not found!"
-    exit 1
+if [[ -z "${DEPLOY_ALLOW_DIRTY:-}" ]] && ! git -C "$SOURCE_DIR" diff --quiet HEAD -- . 2>/dev/null; then
+  fail "Uncommitted changes in custom_components/esb_smart_meter. Commit them or set DEPLOY_ALLOW_DIRTY=1."
 fi
 
-# Check if target volume is mounted
-if [ ! -d "/Volumes/config" ]; then
-    echo "❌ Error: /Volumes/config is not mounted!"
-    echo "   Please ensure your Home Assistant config volume is mounted."
-    exit 1
+version() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$1"; }
+SRC_VERSION="$(version "$SOURCE_DIR/manifest.json")"
+OLD_VERSION="none"
+[[ -f "$TARGET_DIR/manifest.json" ]] && OLD_VERSION="$(version "$TARGET_DIR/manifest.json")"
+echo "🚀 ESB Smart Meter $OLD_VERSION → $SRC_VERSION  (HA $(cat "$HA_CONFIG/.HA_VERSION"), $HA_CONFIG)"
+
+# --inplace: the HA Samba add-on vetoes names starting with "._", and rsync's
+# temp files for __init__.py (".__init__.py.XXXX") would match that pattern.
+RSYNC_ARGS=(-a --inplace --delete --delete-excluded --exclude '__pycache__/' --exclude '*.pyc' --exclude '.DS_Store')
+
+# rsync exit 23/24 = some items could not be transferred/deleted. On Samba this is
+# usually a folder holding hidden, vetoed "._*" files; the version check below
+# still proves the integration itself was copied.
+run_rsync() {
+  local rc=0
+  rsync "$@" || rc=$?
+  if (( rc == 23 || rc == 24 )); then
+    echo "⚠️  rsync could not remove some items (often hidden Samba '._*' files); continuing." >&2
+  elif (( rc != 0 )); then
+    fail "rsync failed (exit $rc)."
+  fi
+}
+if (( DRY_RUN )); then
+  run_rsync "${RSYNC_ARGS[@]}" --dry-run --itemize-changes "$SOURCE_DIR/" "$TARGET_DIR/"
+  echo "ℹ️  Dry run: nothing changed."
+  exit 0
 fi
 
-# Create target directory if it doesn't exist
+if [[ -d "$TARGET_DIR" ]]; then
+  BACKUP="$BACKUP_ROOT/$(date +%Y%m%d-%H%M%S)-$OLD_VERSION"
+  mkdir -p "$BACKUP_ROOT"
+  run_rsync -a --inplace --exclude '__pycache__/' --exclude '._*' "$TARGET_DIR/" "$BACKUP/"
+  echo "💾 Backup: $BACKUP"
+  # Keep only the newest $KEEP_BACKUPS backups (portable: works with BSD and GNU tools)
+  ls -1d "$BACKUP_ROOT"/*/ 2>/dev/null | sort \
+    | awk -v keep="$KEEP_BACKUPS" '{a[NR]=$0} END{for(i=1;i<=NR-keep;i++) print a[i]}' \
+    | while IFS= read -r old; do rm -rf "$old" 2>/dev/null || echo "⚠️  Could not fully remove old backup $old" >&2; done
+fi
+
 mkdir -p "$TARGET_DIR"
+run_rsync "${RSYNC_ARGS[@]}" "$SOURCE_DIR/" "$TARGET_DIR/"
+# Drop stale bytecode so HA recompiles from the new sources
+find "$TARGET_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
-# Copy Python files
-echo "📦 Copying Python files..."
-cp -v "$SOURCE_DIR"/*.py "$TARGET_DIR/"
-
-# Copy JSON files (manifest, strings, translations)
-echo "📄 Copying configuration files..."
-cp -v "$SOURCE_DIR"/*.json "$TARGET_DIR/"
-
-# Copy translations directory if it exists
-if [ -d "$SOURCE_DIR/translations" ]; then
-    echo "🌍 Copying translations..."
-    mkdir -p "$TARGET_DIR/translations"
-    cp -v "$SOURCE_DIR/translations"/*.json "$TARGET_DIR/translations/"
+[[ "$(version "$TARGET_DIR/manifest.json")" == "$SRC_VERSION" ]] || fail "Version check failed after copy."
+echo "✅ Deployed $SRC_VERSION. Restart Home Assistant to load it (Settings → System → Restart)."
+if [[ -n "${BACKUP:-}" ]]; then
+  echo "↩️  Rollback: rsync -a --delete \"$BACKUP/\" \"$TARGET_DIR/\" && restart HA"
 fi
-
-echo "✅ Deployment complete!"
-echo ""
-echo "📋 Next steps:"
-echo "   1. Restart Home Assistant to load the updated integration"
-echo "   2. Check the logs for any errors during startup"
-echo ""
-echo "💡 To restart Home Assistant:"
-echo "   - Developer Tools > YAML > Restart"
-echo "   - Or use: ha core restart (if using Home Assistant OS)"

@@ -49,6 +49,7 @@ venv/
 ENV/
 env/
 .venv
+.venv-*/
 
 # IDEs
 .vscode/
@@ -79,4 +80,7 @@ dmypy.json
 .ruff_cache/
 
 .env
-HDF_calckWh_12345678901_12-11-2025 (2).csv
+# ESB data exports contain the MPRN and household usage; never commit them
+HDF_*.csv
+*.csv
+!tests/**/*.csv

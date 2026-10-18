@@ -1,7 +1,7 @@
 """Tests for ESB Smart Meter integration __init__.py."""
 
 from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

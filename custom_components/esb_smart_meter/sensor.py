@@ -1,6 +1,5 @@
 """Support for ESB Smart Meter sensors."""
 
-import logging
 from abc import abstractmethod
 from typing import Any
 from datetime import datetime, timezone
@@ -18,7 +17,6 @@ from .coordinator import ESBDataUpdateCoordinator
 from .models import ESBData
 from .statistics import async_import_hourly_statistics
 
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -71,9 +69,11 @@ class BaseSensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):
 
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
-    # Use TOTAL (not TOTAL_INCREASING) since values are recalculated from ESB CSV
-    # which may have varying historical data availability
-    _attr_state_class = SensorStateClass.TOTAL
+    # Moving windows: a state class would compile negative statistics as the window
+    # shifts. Long-term/Energy dashboard data comes from the History sensors instead.
+    _attr_state_class = None
+    # Kept on the live state for templates, but too large for the recorder (16 KB)
+    _unrecorded_attributes = frozenset({"readings"})
     _attr_icon = "mdi:flash"
 
     def __init__(

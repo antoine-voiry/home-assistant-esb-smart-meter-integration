@@ -24,5 +24,46 @@
     "abort": {
       "already_configured": "This MPRN is already configured"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ESB Smart Meter Options",
+        "description": "Current update interval: {current_interval} hours",
+        "menu_options": {
+          "update_interval": "Change update interval",
+          "manual_cookies": "Provide Session Cookies (CAPTCHA Bypass)"
+        }
+      },
+      "update_interval": {
+        "title": "Update Interval",
+        "data": {
+          "update_interval": "Update interval (hours)"
+        },
+        "data_description": {
+          "update_interval": "How often to download data from ESB (1-168 hours). ESB publishes data with a 1-2 day delay, so 24 hours is recommended."
+        }
+      },
+      "manual_cookies": {
+        "title": "Manual Cookie Input",
+        "description": "If ESB Networks is showing CAPTCHA, you can provide session cookies manually:\n\n{cookie_instructions}",
+        "data": {
+          "manual_cookies": "Cookie String"
+        },
+        "data_description": {
+          "manual_cookies": "Paste the entire cookie string from your browser"
+        }
+      }
+    },
+    "error": {
+      "empty_cookies": "Cookie string cannot be empty",
+      "invalid_cookies": "Failed to parse or save cookies. Please check the format and try again."
+    }
+  },
+  "issues": {
+    "captcha_required": {
+      "title": "ESB Networks requires CAPTCHA verification",
+      "description": "ESB Networks is asking for a CAPTCHA for meter {mprn}. Log in at {esb_url} in your browser, then open Settings → Devices & services → ESB Smart Meter → Configure → Provide Session Cookies and paste your cookies. Updates resume automatically once the cookies work."
+    }
   }
 }

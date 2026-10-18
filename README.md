@@ -408,6 +408,16 @@ entities) for the Energy Dashboard — they carry the correct historic timestamp
 scrolling back to past dates shows real usage. Data appears 1-2 days after use because
 of ESB's publishing delay. The energy config page may show the History sensors as "Entity unavailable" — this is expected and harmless as they are intentionally stateless.
 
+### Upgrading to 1.3.8
+
+The period sensors (Today, Last 7 Days, This Month, …) no longer have a `state_class`.
+They were producing negative long-term statistics because their windows move.
+Use the **History** sensors for the Energy dashboard.
+
+After upgrading, Home Assistant lists the old period statistics under
+**Developer tools → Statistics** as "no longer has a state class". Click **Fix issue → Delete**
+for each one. Your History statistics are not affected.
+
 ### Automation Examples
 
 **Alert on high daily usage**:

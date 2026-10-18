@@ -100,7 +100,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
     async def async_step_update_interval(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Configure update interval."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(title="", data={**self._config_entry.options, **user_input})
 
         data_schema = vol.Schema(
             {
@@ -136,7 +136,11 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
 
                 if success:
                     _LOGGER.info("Manual cookies saved successfully for MPRN %s", mprn)
-                    return self.async_create_entry(title="", data={})
+                    entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+                    if entry_data:
+                        # Use the new cookies now rather than after the CAPTCHA back-off interval
+                        self.hass.async_create_task(entry_data["coordinator"].async_request_refresh())
+                    return self.async_create_entry(title="", data=dict(self._config_entry.options))
 
                 _LOGGER.error("Failed to save manual cookies for MPRN %s", mprn)
                 errors[CONF_MANUAL_COOKIES] = "invalid_cookies"

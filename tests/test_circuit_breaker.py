@@ -245,3 +245,80 @@ class TestCircuitBreaker:
         circuit_breaker.record_success()
         assert circuit_breaker._failure_count == 0
         assert circuit_breaker._is_open is False
+
+
+class TestCircuitBreakerNotifications:
+    """Notifications shown to the user when the breaker opens and recovers."""
+
+    @pytest.fixture
+    def hass(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        hass = MagicMock()
+        hass.services.async_call = AsyncMock()
+        return hass
+
+    def _open(self, breaker):
+        for _ in range(CIRCUIT_BREAKER_FAILURES):
+            breaker.record_failure()
+
+    def test_open_notification_scheduled_once_per_opening(self, hass):
+        breaker = CircuitBreaker(hass=hass, mprn="12345678901")
+        self._open(breaker)
+        breaker.record_failure()  # still open: no second notification
+        assert hass.async_create_task.call_count == 1
+        hass.async_create_task.call_args.args[0].close()
+
+    def test_no_notification_without_hass(self):
+        breaker = CircuitBreaker()
+        self._open(breaker)  # must not raise
+        assert breaker._is_open
+
+    def test_task_creation_errors_are_swallowed(self, hass):
+        hass.async_create_task.side_effect = RuntimeError("loop closed")
+        breaker = CircuitBreaker(hass=hass, mprn="12345678901")
+        self._open(breaker)
+        assert breaker._is_open
+        breaker._last_failure_time = datetime.now() - timedelta(days=1)
+        assert breaker.can_attempt()
+        breaker._is_open = True
+        breaker.record_success()  # dismiss path also swallows the error
+        assert not breaker._is_open
+        # close coroutines created before the side effect raised
+        for call in hass.async_create_task.call_args_list:
+            call.args[0].close()
+
+    @pytest.mark.asyncio
+    async def test_open_notification_message_minutes(self, hass):
+        breaker = CircuitBreaker(hass=hass, mprn="12345678901")
+        breaker._failure_count = 3
+        await breaker._send_circuit_open_notification(1800)
+        domain, service, data = hass.services.async_call.call_args.args
+        assert (domain, service) == ("persistent_notification", "create")
+        assert "30 minutes" in data["message"]
+        assert data["notification_id"].endswith("12345678901")
+
+    @pytest.mark.asyncio
+    async def test_open_notification_message_hours(self, hass):
+        breaker = CircuitBreaker(hass=hass, mprn="12345678901")
+        await breaker._send_circuit_open_notification(7200)
+        assert "2.0 hours" in hass.services.async_call.call_args.args[2]["message"]
+
+    @pytest.mark.asyncio
+    async def test_notification_service_errors_are_swallowed(self, hass):
+        hass.services.async_call.side_effect = Exception("service unavailable")
+        breaker = CircuitBreaker(hass=hass, mprn="12345678901")
+        await breaker._send_circuit_open_notification(60)
+        await breaker._dismiss_circuit_notification()
+
+    @pytest.mark.asyncio
+    async def test_recovery_dismisses_notification(self, hass):
+        breaker = CircuitBreaker(hass=hass, mprn="12345678901")
+        self._open(breaker)
+        hass.async_create_task.call_args.args[0].close()
+        breaker.record_success()
+        dismiss = hass.async_create_task.call_args.args[0]
+        await dismiss
+        domain, service, data = hass.services.async_call.call_args.args
+        assert (domain, service) == ("persistent_notification", "dismiss")
+        assert data["notification_id"].endswith("12345678901")
