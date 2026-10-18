@@ -318,7 +318,7 @@ class TestCircuitBreakerNotifications:
         hass.async_create_task.call_args.args[0].close()
         breaker.record_success()
         dismiss = hass.async_create_task.call_args.args[0]
-        await dismiss
+        assert await dismiss is None  # run the scheduled dismissal
         domain, service, data = hass.services.async_call.call_args.args
         assert (domain, service) == ("persistent_notification", "dismiss")
         assert data["notification_id"].endswith("12345678901")
