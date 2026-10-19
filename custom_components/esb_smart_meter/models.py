@@ -70,6 +70,7 @@ class ESBData:
         export_data: list[tuple[datetime, float]] = []
         unknown_types: dict[str, int] = defaultdict(int)
         invalid_values = 0
+        nonexistent_labels = 0
         # ESB returns newest rows first; fold detection needs chronological order
         parsed_labels: list[datetime | None] = []
         for row in data:
@@ -81,30 +82,78 @@ class ESBData:
         ordered = list(zip(data, parsed_labels))
         if len(valid) > 1 and valid[0] > valid[-1]:
             ordered.reverse()
-        seen_ambiguous: set[tuple[str, datetime]] = set()
+
+        # First pass: recognize the read type and classify each Dublin wall-clock
+        # label before validating the numeric value, so an invalid value cannot
+        # shrink an autumn label group that must be judged as a whole.
+        prepared: list[tuple[datetime, float, str, str]] = []
+        repeated: dict[tuple[str, datetime], int] = defaultdict(int)
+        admitted_repeated: dict[tuple[str, datetime], int] = defaultdict(int)
         for row, label in ordered:
+            if label is None:
+                _LOGGER.warning("Skipping invalid row: unparseable date %r", row.get(CSV_COLUMN_DATE))
+                continue
+            read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
+            if READ_TYPE_IMPORT in read_type:
+                series = READ_TYPE_IMPORT
+            elif READ_TYPE_EXPORT in read_type:
+                series = READ_TYPE_EXPORT
+            else:
+                unknown_types[read_type] += 1
+                continue
+            kind = self._classify_label(label)
+            if kind == "nonexistent":
+                nonexistent_labels += 1
+                continue
+            if kind == "repeated":
+                # Count every recognized occurrence, even one whose value is
+                # later rejected, so a three-or-more-row group is refused whole.
+                repeated[(series, label)] += 1
             try:
-                if label is None:
-                    raise ValueError(f"unparseable date {row.get(CSV_COLUMN_DATE)!r}")
                 value = float(row[CSV_COLUMN_VALUE])
                 if not math.isfinite(value) or value < 0:
                     invalid_values += 1
                     continue
-                read_type = str(row.get(CSV_COLUMN_READ_TYPE, "")).strip()
-                timestamp = self._localize(label, seen_ambiguous, read_type)
-                if timestamp < cutoff_date:
-                    continue
-                if READ_TYPE_IMPORT in read_type:
-                    import_data.append((timestamp, value))
-                elif READ_TYPE_EXPORT in read_type:
-                    export_data.append((timestamp, value))
-                else:
-                    unknown_types[read_type] += 1
             except (ValueError, KeyError) as err:
                 _LOGGER.warning("Skipping invalid row: %s", err)
                 continue
+            if kind == "repeated":
+                admitted_repeated[(series, label)] += 1
+            prepared.append((label, value, series, kind))
+
+        # Second pass: resolve admitted labels to UTC, refusing repeated labels
+        # that are not part of a supported pair, then apply the rolling cutoff.
+        seen_repeated: dict[tuple[str, datetime], int] = defaultdict(int)
+        refused_repeated = 0
+        for label, value, series, kind in prepared:
+            if kind == "repeated":
+                key = (series, label)
+                # The raw group must be exactly two rows and both folds must
+                # survive numeric validation; otherwise refuse the whole group.
+                if repeated[key] != 2 or admitted_repeated[key] != 2:
+                    refused_repeated += 1
+                    continue
+                fold = seen_repeated[key]
+                seen_repeated[key] += 1
+                timestamp = label.replace(tzinfo=DUBLIN_TZ, fold=fold).astimezone(timezone.utc)
+            else:
+                timestamp = label.replace(tzinfo=DUBLIN_TZ).astimezone(timezone.utc)
+            if timestamp < cutoff_date:
+                continue
+            if series == READ_TYPE_IMPORT:
+                import_data.append((timestamp, value))
+            else:
+                export_data.append((timestamp, value))
         import_data.sort(key=lambda item: item[0])
         export_data.sort(key=lambda item: item[0])
+        if nonexistent_labels:
+            _LOGGER.warning(
+                "Skipped %d rows labelled with a nonexistent Dublin civil time", nonexistent_labels
+            )
+        if refused_repeated:
+            _LOGGER.warning(
+                "Skipped %d rows in unsupported repeated autumn label groups", refused_repeated
+            )
         if unknown_types:
             _LOGGER.warning(
                 "Skipped %d rows with unrecognized Read Type: %s",
@@ -116,22 +165,21 @@ class ESBData:
         return import_data, export_data
 
     @staticmethod
-    def _localize(naive: datetime, seen_ambiguous: set[tuple[str, datetime]], read_type: str) -> datetime:
-        """Resolve a Dublin wall-clock label to UTC.
+    def _classify_label(naive: datetime) -> str:
+        """Classify a Dublin wall-clock label using its two fold candidates.
 
-        On the October fall-back day the 01:00-02:00 labels occur twice; the first
-        occurrence in chronological order is summer time (fold=0), the second is
-        winter time (fold=1).
+        A label that does not survive a UTC round trip never occurs locally (the
+        spring-forward gap). A label whose two folds carry different offsets
+        occurs twice (the autumn fall-back). Labels are interval-END times, so a
+        repeated label is only resolvable from its position in an ordered pair.
         """
         first = naive.replace(tzinfo=DUBLIN_TZ, fold=0)
         second = naive.replace(tzinfo=DUBLIN_TZ, fold=1)
-        if first.utcoffset() == second.utcoffset():
-            return first.astimezone(timezone.utc)
-        key = (read_type, naive)
-        if key in seen_ambiguous:
-            return second.astimezone(timezone.utc)
-        seen_ambiguous.add(key)
-        return first.astimezone(timezone.utc)
+        if first.astimezone(timezone.utc).astimezone(DUBLIN_TZ).replace(tzinfo=None) != naive:
+            return "nonexistent"
+        if first.utcoffset() != second.utcoffset():
+            return "repeated"
+        return "unique"
 
     @staticmethod
     def _as_utc(moment: datetime) -> datetime:
@@ -199,13 +247,27 @@ class ESBData:
 
     @staticmethod
     def _hourly(series: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
-        """Aggregate 30-minute readings into hourly buckets, ascending."""
+        """Aggregate 30-minute readings into complete hourly buckets, ascending.
+
+        A bucket is admitted only once both of its interval-end readings are
+        present. The rolling 90-day cutoff lands inside an hour, so the leading
+        bucket can hold a single half hour; importing it would replace a
+        previously complete stored hour with a lower sum and shift the whole
+        later cumulative suffix. Incomplete buckets (leading, trailing or a gap)
+        are omitted rather than imported as partial or zero energy.
+        """
         buckets: dict[datetime, float] = defaultdict(float)
+        ends: dict[datetime, set[datetime]] = defaultdict(set)
         for timestamp, value in series:
             # ESB timestamps are interval end times, so bucket by interval start
             hour_start = (timestamp - timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
             buckets[hour_start] += value
-        return sorted(buckets.items())
+            ends[hour_start].add(timestamp)
+        return sorted(
+            (start, kwh)
+            for start, kwh in buckets.items()
+            if ends[start] == {start + timedelta(minutes=30), start + timedelta(hours=1)}
+        )
 
     @property
     def today(self) -> float:
