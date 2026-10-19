@@ -99,25 +99,10 @@ def mock_asyncio_sleep():
         yield mock_sleep
 
 
-class FrozenDatetime(datetime):
-    """datetime whose now() returns a test-chosen instant.
-
-    ESBData derives its rolling 90-day cutoff from datetime.now(timezone.utc),
-    so a frozen clock is the only way to place the cutoff deterministically.
-    """
-
-    frozen: datetime
-
-    @classmethod
-    def now(cls, tz=None):
-        """Return the frozen instant, converted to tz when one is given."""
-        return cls.frozen.astimezone(tz) if tz else cls.frozen.replace(tzinfo=None)
-
-
 @pytest.fixture
 def models_now():
-    """Freeze the models module clock, defaulting to 2026-07-15 12:37Z."""
-    FrozenDatetime.frozen = datetime(2026, 7, 15, 12, 37, tzinfo=timezone.utc)
-    with patch("custom_components.esb_smart_meter.models.datetime", FrozenDatetime):
-        yield FrozenDatetime
+    """Control the UTC clock used for the rolling cutoff, retaining strptime."""
+    with patch("custom_components.esb_smart_meter.models.datetime", wraps=datetime) as clock:
+        clock.now.return_value = datetime(2026, 7, 15, 12, 37, tzinfo=timezone.utc)
+        yield clock
 

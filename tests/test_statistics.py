@@ -11,6 +11,9 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.esb_smart_meter.models import ESBData
+from custom_components.esb_smart_meter.sensor import (
+    ExportHistorySensor, ExportTotalSensor, UsageHistorySensor, UsageTotalSensor,
+)
 from custom_components.esb_smart_meter.statistics import async_import_hourly_statistics
 
 IMPORT = "Active Import Interval (kWh)"
@@ -115,152 +118,85 @@ async def test_metadata_declares_energy_unit_class(hourly_usage):
     assert metadata["unit_class"] == "energy"
 
 
-def _usage_rows(*labels_and_values):
-    """Build ESB import rows from (Dublin wall-clock label, value) pairs."""
-    return [
-        {"Read Date and End Time": label, "Read Value": value, "Read Type": IMPORT}
-        for label, value in labels_and_values
-    ]
-
-
-async def _stored_rows(hass, since):
-    """Read the stored hourly statistics rows back from the recorder."""
+async def _stored_rows(hass, statistic_id=USAGE_ID):
+    """Read actual stored state/sum/change, including the preceding baseline."""
     stats = await hass.async_add_executor_job(
-        statistics_during_period, hass, since, None, {USAGE_ID}, "hour", None, {"state", "sum", "change"}
+        statistics_during_period, hass, datetime(2026, 4, 1, tzinfo=timezone.utc), None,
+        {statistic_id}, "hour", None, {"state", "sum", "change"}
     )
-    return stats[USAGE_ID]
-
-
-def _starts(stats):
-    """Return row start times as UTC datetimes (the recorder reports timestamps)."""
-    return [datetime.fromtimestamp(row["start"], timezone.utc) for row in stats]
+    return stats.get(statistic_id, [])
 
 
 @pytest.mark.asyncio
 async def test_first_import_publishes_only_complete_hours(recorder_mock, hass, models_now):
-    """A cutoff inside the first hour must not publish leading or trailing halves."""
-    # Default frozen clock: cutoff = 2026-04-16 12:37Z, inside the 12:00Z hour.
-    rows = _usage_rows(
-        ("16-04-2026 15:30", "0.9"),  # 14:30Z: only the first end of the 14:00Z hour
-        ("16-04-2026 15:00", "2.0"),  # 14:00Z: second end of the 13:00Z hour
-        ("16-04-2026 14:30", "1.0"),  # 13:30Z: first end of the 13:00Z hour
-        ("16-04-2026 14:00", "0.5"),  # 13:00Z: second end of the 12:00Z hour, kept
-        ("16-04-2026 13:30", "0.5"),  # 12:30Z: first end of the 12:00Z hour, cut off
-        ("16-04-2026 13:00", "0.25"),  # 12:00Z: already outside the 90-day window
-    )
-
-    await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage())
+    """Cutoff 12:37Z removes the leading half; the trailing half waits for refresh."""
+    h = datetime(2026, 4, 16, 13)  # Dublin: one hour ahead of UTC
+    rows = [_row(h + timedelta(minutes=30 * i), value, IMPORT)
+            for i, value in enumerate([0.25, 0.5, 0.5, 1, 2, 0.9])]
+    assert await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage()) == 3
     await async_wait_recording_done(hass)
-
-    stats = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
-    assert _starts(stats) == [datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc)]
-    assert [row["state"] for row in stats] == pytest.approx([3.0])
-    assert [row["sum"] for row in stats] == pytest.approx([3.0])
+    stats = await _stored_rows(hass)
+    assert [row["start"] for row in stats] == [datetime(2026, 4, 16, 13, tzinfo=timezone.utc).timestamp()]
+    assert [row["sum"] for row in stats] == [3]
+    rows.append(_row(h + timedelta(hours=3), 0.1, IMPORT))
+    assert await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage()) == 4
+    await async_wait_recording_done(hass)
+    assert [row["change"] for row in await _stored_rows(hass)] == pytest.approx([3, 1])
 
 
 @pytest.mark.asyncio
 async def test_later_cutoff_preserves_complete_hours_and_suffix(recorder_mock, hass, models_now):
-    """A refresh whose cutoff cuts the first hour must not rewrite it or shift later sums."""
-    rows = _usage_rows(
-        ("16-04-2026 15:00", "1.5"),  # 14:00Z: second end of the 13:00Z hour
-        ("16-04-2026 14:30", "1.0"),  # 13:30Z: first end of the 13:00Z hour
-        ("16-04-2026 14:00", "0.5"),  # 13:00Z: second end of the 12:00Z hour
-        ("16-04-2026 13:30", "0.25"),  # 12:30Z: first end of the 12:00Z hour
-    )
-
-    # First publication: cutoff sits exactly on 12:00Z, so both hours are complete.
-    models_now.frozen = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
-    await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage())
+    """A moving cutoff must not lower the old boundary hour or shift its suffix."""
+    h = datetime(2026, 4, 16, 13)
+    rows = [_row(h + timedelta(minutes=30 * i), value, IMPORT)
+            for i, value in enumerate([0.25, 0.5, 1, 1.5], start=1)]
+    models_now.now.return_value = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+    assert await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage()) == 3.25
     await async_wait_recording_done(hass)
-    first = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
-    assert _starts(first) == [
-        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc),
-    ]
-    assert [row["sum"] for row in first] == pytest.approx([0.75, 3.25])
-
-    # Later refresh: the cutoff now falls inside 12:00Z, so only 13:00Z is admitted.
-    models_now.frozen = datetime(2026, 7, 15, 12, 37, tzinfo=timezone.utc)
-    await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage())
+    before = await _stored_rows(hass)
+    assert [row["sum"] for row in before] == [0.75, 3.25]
+    models_now.now.return_value += timedelta(minutes=37)
+    assert await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage()) == 3.25
     await async_wait_recording_done(hass)
-
-    stats = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
-    # The complete 12:00Z hour keeps its published sum; the later row continues from it.
-    assert _starts(stats) == [
-        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc),
-    ]
-    assert [row["state"] for row in stats] == pytest.approx([0.75, 3.25])
-    assert [row["sum"] for row in stats] == pytest.approx([0.75, 3.25])
-    assert [row["change"] for row in stats] == pytest.approx([0.75, 2.5])
-
-
-def _three_complete_usage_hours():
-    """12:00Z, 13:00Z and 14:00Z complete hours with 1, 2 and 3 kWh."""
-    return _usage_rows(
-        ("16-04-2026 13:30", "0.5"),  # 12:30Z: first end of the 12:00Z hour
-        ("16-04-2026 14:00", "0.5"),  # 13:00Z: second end of the 12:00Z hour
-        ("16-04-2026 14:30", "1.0"),  # 13:30Z: first end of the 13:00Z hour
-        ("16-04-2026 15:00", "1.0"),  # 14:00Z: second end of the 13:00Z hour
-        ("16-04-2026 15:30", "1.5"),  # 14:30Z: first end of the 14:00Z hour
-        ("16-04-2026 16:00", "1.5"),  # 15:00Z: second end of the 14:00Z hour
-    )
+    assert await _stored_rows(hass) == before
+    assert [row["change"] for row in before] == [0.75, 2.5]
 
 
 @pytest.mark.asyncio
-async def test_retained_internal_gap_preserves_later_state_sum_change(recorder_mock, hass, models_now):
-    """A stored hour omitted by the capture must stay in the later cumulative suffix."""
-    models_now.frozen = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
-    rows = _three_complete_usage_hours()
-
-    total = await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage())
+@pytest.mark.parametrize("seeded", [False, True])
+@pytest.mark.parametrize("direction,history_cls,total_cls", [
+    ("Import", UsageHistorySensor, UsageTotalSensor), ("Export", ExportHistorySensor, ExportTotalSensor),
+])
+async def test_internal_hole_defers_whole_import(recorder_mock, hass, models_now, seeded,
+                                               direction, history_cls, total_cls):
+    """No recorder access, partial prefix, fake rows or Total change on refusal."""
+    models_now.now.return_value = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
+    h = datetime(2026, 4, 16, 13)
+    rows = [_row(h + timedelta(minutes=30 * i), value, f"Active {direction} Interval (kWh)")
+            for i, value in enumerate([0.5, 0.5, 1, 1, 1.5, 1.5], start=1)]
+    coordinator = MagicMock(data=ESBData(data=rows))
+    history = history_cls(coordinator=coordinator, mprn="12345678901")
+    history.hass, history.entity_id = hass, f"sensor.esb_{direction.lower()}_history"
+    total = total_cls(coordinator=coordinator, mprn="12345678901", history=history)
+    total.async_write_ha_state = MagicMock()
+    if seeded:
+        await history._async_import_statistics()
+        await async_wait_recording_done(hass)
+        assert total.native_value == 6
+    before = await _stored_rows(hass, history.entity_id)
+    assert [row["sum"] for row in before] == ([1, 3, 6] if seeded else [])
+    total.async_write_ha_state.reset_mock()
+    coordinator.data = ESBData(data=rows[:2] + rows[3:])  # Missing one end of the internal hour.
+    hourly = history._hourly(esb_data=coordinator.data)
+    assert len(hourly) == 2
+    with patch("custom_components.esb_smart_meter.statistics.get_instance") as recorder, patch(
+        "custom_components.esb_smart_meter.statistics.async_import_statistics"
+    ) as publish:
+        assert await async_import_hourly_statistics(hass, history.entity_id, hourly) is None
+        await history._async_import_statistics()  # Exercise unmodified None control and paired Total.
+    recorder.assert_not_called()
+    publish.assert_not_called()
     await async_wait_recording_done(hass)
-    before = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
-    assert _starts(before) == [
-        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 16, 14, 0, tzinfo=timezone.utc),
-    ]
-    assert [row["state"] for row in before] == pytest.approx([1.0, 3.0, 6.0])
-    assert [row["sum"] for row in before] == pytest.approx([1.0, 3.0, 6.0])
-    assert [row["change"] for row in before] == pytest.approx([1.0, 2.0, 3.0])
-    assert total == pytest.approx(6.0)  # paired Total before the incomplete refresh
-
-    # The 14:30 label (13:30Z) is missing, so the 13:00Z hour is now incomplete.
-    incomplete = [row for row in rows if row["Read Date and End Time"] != "16-04-2026 14:30"]
-    total = await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=incomplete).hourly_usage())
-    await async_wait_recording_done(hass)
-    after = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
-    # The recorder keeps the stored 13:00Z row; later sums must still include its 2 kWh.
-    assert _starts(after) == [
-        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 16, 13, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 16, 14, 0, tzinfo=timezone.utc),
-    ]
-    assert [row["state"] for row in after] == pytest.approx([1.0, 3.0, 6.0])
-    assert [row["sum"] for row in after] == pytest.approx([1.0, 3.0, 6.0])
-    assert [row["change"] for row in after] == pytest.approx([1.0, 2.0, 3.0])
-    assert total == pytest.approx(6.0)
-
-
-@pytest.mark.asyncio
-async def test_internal_gap_without_history_fabricates_no_energy(recorder_mock, hass, models_now):
-    """With no stored evidence the missing hour stays unknown: no row, no zero fill."""
-    models_now.frozen = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
-    rows = [
-        row
-        for row in _three_complete_usage_hours()
-        if row["Read Date and End Time"] != "16-04-2026 14:30"
-    ]
-
-    total = await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage())
-    await async_wait_recording_done(hass)
-    stats = await _stored_rows(hass, datetime(2026, 4, 1, tzinfo=timezone.utc))
-
-    assert _starts(stats) == [
-        datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
-        datetime(2026, 4, 16, 14, 0, tzinfo=timezone.utc),
-    ]
-    assert [row["sum"] for row in stats] == pytest.approx([1.0, 4.0])  # 1 + 3 known kWh
-    assert [row["change"] for row in stats] == pytest.approx([1.0, 3.0])
-    assert total == pytest.approx(4.0)
+    assert await _stored_rows(hass, history.entity_id) == before
+    assert total.native_value == (6 if seeded else None)
+    total.async_write_ha_state.assert_not_called()
