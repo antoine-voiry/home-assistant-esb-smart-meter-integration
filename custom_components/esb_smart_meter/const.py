@@ -47,6 +47,21 @@ CAPTCHA_COOLDOWN_HOURS = 24  # Don't spam notifications
 CONF_MANUAL_COOKIES = "manual_cookies"  # Config key for manual cookie input
 CONF_SESSION_COOKIES = "session_cookies"  # Config key for stored session cookies
 
+# Tariff periods (config subentries); values match TariffPeriod field names
+SUBENTRY_TARIFF = "tariff"
+CONF_PRESET = "preset"
+CONF_EFFECTIVE_FROM = "effective_from"
+CONF_DAY_RATE = "day_rate"
+CONF_NIGHT_RATE = "night_rate"
+CONF_PEAK_RATE = "peak_rate"
+CONF_STANDING_CHARGE = "standing_charge"
+CONF_EXPORT_RATE = "export_rate"
+CONF_NIGHT_START = "night_start"
+CONF_NIGHT_END = "night_end"
+CONF_PEAK_START = "peak_start"
+CONF_PEAK_END = "peak_end"
+CONF_PEAK_WEEKDAYS_ONLY = "peak_weekdays_only"
+
 # Circuit breaker settings
 CIRCUIT_BREAKER_FAILURES = 3  # Open circuit after N failures
 CIRCUIT_BREAKER_TIMEOUT = 1800  # Wait 30 minutes before retry (seconds)
