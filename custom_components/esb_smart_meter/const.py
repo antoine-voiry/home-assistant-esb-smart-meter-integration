@@ -15,6 +15,7 @@ DEFAULT_SCAN_INTERVAL = timedelta(hours=24)  # Retry next day if all attempts fa
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RETRIES = 3  # Max 3 authentication attempts per day (reduced for stealth)
 DEFAULT_RETRY_WAIT = 1800  # Wait 30 minutes (1800 seconds) between retries
+RECENT_IMPORT_DAYS = 7  # Daily statistics import window; ESB only fills in the last day or two
 MAX_CSV_SIZE_MB = 10  # Maximum CSV response size in MB
 
 # Stealth and timing constants

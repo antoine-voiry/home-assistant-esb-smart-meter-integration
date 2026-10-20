@@ -1,6 +1,6 @@
 """Tests for long-term statistics import."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import homeassistant.util.dt as dt_util
@@ -11,7 +11,11 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 from custom_components.esb_smart_meter.models import ESBData
-from custom_components.esb_smart_meter.statistics import async_import_hourly_statistics
+from custom_components.esb_smart_meter.statistics import (
+    async_has_statistic_at,
+    async_import_hourly_statistics,
+    recent_hours,
+)
 
 IMPORT = "Active Import Interval (kWh)"
 USAGE_ID = "sensor.esb_electricity_usage_history"
@@ -112,3 +116,39 @@ async def test_metadata_declares_energy_unit_class(hourly_usage):
 
     _hass, metadata, _stats = add.call_args.args
     assert metadata["unit_class"] == "energy"
+
+
+@pytest.mark.asyncio
+async def test_has_statistic_at(recorder_mock, hass, hourly_usage):
+    await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
+    await async_wait_recording_done(hass)
+
+    first_hour = hourly_usage[0][0]
+    assert await async_has_statistic_at(hass, USAGE_ID, first_hour) is True
+    assert await async_has_statistic_at(hass, USAGE_ID, first_hour - timedelta(hours=5)) is False
+
+
+@pytest.mark.asyncio
+async def test_monetary_metadata_has_no_unit_class(hourly_usage):
+    hass = MagicMock()
+    with patch("custom_components.esb_smart_meter.statistics.get_instance") as get_instance, patch(
+        "custom_components.esb_smart_meter.statistics.async_import_statistics"
+    ) as add:
+        get_instance.return_value.async_add_executor_job = AsyncMock(return_value={})
+        await async_import_hourly_statistics(hass, "sensor.cost", hourly_usage, unit="EUR")
+
+    _hass, metadata, _stats = add.call_args.args
+    assert metadata["unit_of_measurement"] == "EUR"
+    assert metadata["unit_class"] is None
+
+
+def test_recent_hours_keeps_last_days_of_download():
+    newest = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+    hourly = [(newest - timedelta(hours=h), 1.0) for h in range(400, -1, -1)]
+
+    recent = recent_hours(hourly, days=7)
+
+    assert recent[0][0] == newest - timedelta(days=7)
+    assert recent[-1][0] == newest
+    assert len(recent) == 7 * 24 + 1
+    assert recent_hours([], days=7) == []

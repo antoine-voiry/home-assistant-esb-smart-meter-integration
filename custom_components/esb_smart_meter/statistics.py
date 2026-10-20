@@ -13,9 +13,11 @@ from homeassistant.components.recorder.statistics import (
     async_import_statistics,
     statistics_during_period,
 )
+from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.util.unit_conversion import EnergyConverter
 
+from .const import RECENT_IMPORT_DAYS
 from .models import DUBLIN_TZ
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,6 +30,8 @@ async def async_import_hourly_statistics(
     hass: HomeAssistant,
     statistic_id: str,
     hourly: list[tuple[datetime, float]],
+    *,
+    unit: str = UnitOfEnergy.KILO_WATT_HOUR,
 ) -> float | None:
     """Import the hourly buckets and return the cumulative total (None if empty).
 
@@ -52,8 +56,9 @@ async def async_import_hourly_statistics(
         name=None,
         source=RECORDER_SOURCE,
         statistic_id=statistic_id,
-        unit_of_measurement="kWh",
-        unit_class=EnergyConverter.UNIT_CLASS,
+        unit_of_measurement=unit,
+        # Energy needs its unit class (HA 2026.11); currencies have no converter
+        unit_class=EnergyConverter.UNIT_CLASS if unit == UnitOfEnergy.KILO_WATT_HOUR else None,
     )
     async_import_statistics(hass, metadata, stats)
     _LOGGER.debug("Imported %d statistics rows to %s (total %.3f)", len(stats), statistic_id, running_sum)
@@ -76,3 +81,28 @@ async def _baseline(hass: HomeAssistant, statistic_id: str, window_start: dateti
     if series:
         return float(series[-1].get("sum") or 0.0)
     return 0.0
+
+
+async def async_has_statistic_at(hass: HomeAssistant, statistic_id: str, start: datetime) -> bool:
+    """Return True if an hourly statistic row exists for the hour starting at start."""
+    rows = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        start,
+        start + timedelta(hours=1),
+        {statistic_id},
+        "hour",
+        None,
+        {"sum"},
+    )
+    return bool(rows.get(statistic_id))
+
+
+def recent_hours(
+    hourly: list[tuple[datetime, float]], days: int = RECENT_IMPORT_DAYS
+) -> list[tuple[datetime, float]]:
+    """Return the buckets within `days` of the newest one (ESB data lags, so not 'now')."""
+    if not hourly:
+        return []
+    since = hourly[-1][0] - timedelta(days=days)
+    return [(hour, value) for hour, value in hourly if hour >= since]
