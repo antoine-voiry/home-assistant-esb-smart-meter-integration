@@ -14,7 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator
 from .models import ESBData
-from .statistics import async_import_hourly_statistics
+from .statistics import async_has_statistic_at, async_import_hourly_statistics, recent_hours
 
 
 # Entity ids from before entity names were translated; new installs keep them so the
@@ -381,6 +381,7 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_icon = "mdi:flash"
+    _statistics_unit: str = UnitOfEnergy.KILO_WATT_HOUR
 
     def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, translation_key: str) -> None:
         """Initialize the sensor."""
@@ -420,16 +421,33 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
         super()._handle_coordinator_update()
 
     async def _async_import_statistics(self) -> None:
-        """Import hourly buckets and refresh the paired Total sensor."""
+        """Import hourly buckets and refresh the paired Total sensor.
+
+        The whole download is imported the first time (backfill) and whenever a
+        subclass says so; otherwise only the last few days, anchored to the stored sum.
+        """
         if self.coordinator.data is None:
             return
+        hourly = self._hourly(esb_data=self.coordinator.data)
+        if not hourly:
+            return
+        full = await self._needs_full_import(hourly)
         total = await async_import_hourly_statistics(
-            self.hass, self.entity_id, self._hourly(esb_data=self.coordinator.data)
+            self.hass, self.entity_id, hourly if full else recent_hours(hourly), unit=self._statistics_unit
         )
+        if full:
+            await self._async_full_import_done()
         if total is not None:
             self._cumulative = total
             if self._total_sensor is not None:
                 self._total_sensor.async_write_total()
+
+    async def _needs_full_import(self, hourly: list[tuple[Any, float]]) -> bool:
+        """Backfill when the oldest downloaded hour isn't in the statistics yet."""
+        return not await async_has_statistic_at(self.hass, self.entity_id, hourly[0][0])
+
+    async def _async_full_import_done(self) -> None:
+        """Run after a full import; series that track their inputs override this."""
 
 
 class UsageHistorySensor(BaseHistorySensor):

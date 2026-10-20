@@ -1,7 +1,7 @@
 """Integration tests for sensor.py with coordinator pattern."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -272,6 +272,8 @@ class TestBaseSensor:
         usage_total.async_write_ha_state = Mock()
 
         with patch(
+            "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
+        ), patch(
             "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics",
             new=AsyncMock(return_value=6.641),
         ) as mock_import:
@@ -765,6 +767,39 @@ class TestHistorySensorRefreshHooks:
         sensor.hass = MagicMock()
         sensor.entity_id = "sensor.esb_electricity_usage_history"
         return sensor
+
+    @staticmethod
+    def _ten_days():
+        end = datetime.now().replace(minute=0, second=0, microsecond=0)
+        rows = []
+        for h in range(240):
+            label = (end - timedelta(hours=h)).strftime("%d-%m-%Y %H:%M")
+            rows.append({"Read Date and End Time": label, "Read Value": "0.5", "Read Type": "Active Import Interval (kWh)"})
+        return ESBData(data=rows)
+
+    @pytest.mark.asyncio
+    async def test_first_import_is_full(self):
+        sensor = self._sensor(data=self._ten_days())
+        with patch(
+            "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=False)
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+        ) as importer:
+            await sensor._async_import_statistics()
+        assert len(importer.call_args.args[2]) == len(sensor.coordinator.data.hourly_usage())
+
+    @pytest.mark.asyncio
+    async def test_later_imports_cover_recent_days_only(self):
+        sensor = self._sensor(data=self._ten_days())
+        with patch(
+            "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+        ) as importer:
+            await sensor._async_import_statistics()
+        hours = importer.call_args.args[2]
+        assert hours[-1][0] - hours[0][0] == timedelta(days=7)
+        assert importer.call_args.kwargs["unit"] == "kWh"
 
     def test_coordinator_update_schedules_import(self):
         sensor = self._sensor(data=None)
