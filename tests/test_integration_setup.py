@@ -74,7 +74,9 @@ async def test_setup_names_entities_and_unloads(recorder_mock, hass, enable_cust
     assert entities[f"{MPRN}_usage_history"].entity_id == "sensor.esb_electricity_usage_history"
     assert entities[f"{MPRN}_circuit_breaker_status"].entity_id == "sensor.esb_smart_meter_circuit_breaker_status"
     assert hass.states.get(today.entity_id).attributes["friendly_name"] == f"ESB Smart Meter ({MPRN}) Usage today"
-    assert hass.states.get(today.entity_id).state == "0.5"
+    # The reading is 3h old, so "today" is empty just after midnight; the 24h window always holds it
+    last_24h = entities[f"{MPRN}_last_24_hours"]
+    assert hass.states.get(last_24h.entity_id).state == "0.5"
     assert today.entity_category is None
     assert entities[f"{MPRN}_api_status"].entity_category is EntityCategory.DIAGNOSTIC
 
