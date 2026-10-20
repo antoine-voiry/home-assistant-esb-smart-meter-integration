@@ -3,11 +3,14 @@
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import homeassistant.util.dt as dt_util
 import pytest
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
+from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState, ConfigSubentryData
 from homeassistant.const import EntityCategory
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.esb_smart_meter.api_client import InvalidAuthException
 from custom_components.esb_smart_meter.const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
@@ -90,3 +93,79 @@ async def test_rejected_password_at_setup_starts_reauth(
     flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
     assert [f["context"]["source"] for f in flows] == [SOURCE_REAUTH]
     session.close.assert_awaited_once()
+
+
+def _ten_days_of_usage() -> ESBData:
+    end = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
+    rows = [
+        {
+            "Read Date and End Time": (end - timedelta(minutes=30 * i)).strftime("%d-%m-%Y %H:%M"),
+            "Read Value": "0.5",
+            "Read Type": "Active Import Interval (kWh)",
+        }
+        for i in range(480)
+    ]
+    return ESBData(data=rows)
+
+
+TARIFF = {
+    "effective_from": "2020-01-01", "day_rate": 0.30, "night_rate": 0.30, "peak_rate": 0.30,
+    "standing_charge": 0.0, "export_rate": 0.0, "night_start": 23, "night_end": 8,
+    "peak_start": 17, "peak_end": 19, "peak_weekdays_only": False,
+}
+
+
+async def _sums(hass, statistic_id):
+    await async_wait_recording_done(hass)
+    rows = await hass.async_add_executor_job(
+        statistics_during_period, hass, dt_util.utcnow() - timedelta(days=30), None, {statistic_id}, "hour", None, {"sum"}
+    )
+    return [row["sum"] for row in rows.get(statistic_id, [])]
+
+
+@pytest.mark.asyncio
+async def test_backfill_cost_and_recost_after_tariff_change(recorder_mock, hass, enable_custom_integrations, session):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MPRN,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+        subentries_data=[ConfigSubentryData(data=TARIFF, subentry_type="tariff", title="t", unique_id="2020-01-01")],
+    )
+    entry.add_to_hass(hass)
+    fetch = AsyncMock(return_value=_ten_days_of_usage())
+
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        usage = await _sums(hass, "sensor.esb_electricity_usage_history")
+        cost = await _sums(hass, "sensor.esb_electricity_usage_cost_history")
+        assert len(usage) == 240  # whole download backfilled
+        assert usage[-1] == pytest.approx(240.0)  # 1 kWh per hour
+        assert cost[-1] == pytest.approx(240 * 0.30)
+
+        subentry = next(iter(entry.subentries.values()))
+        hass.config_entries.async_update_subentry(entry, subentry, data={**TARIFF, "day_rate": 0.5, "night_rate": 0.5, "peak_rate": 0.5})
+        await hass.async_block_till_done()  # update listener reloads the entry
+
+        cost = await _sums(hass, "sensor.esb_electricity_usage_cost_history")
+        assert cost[-1] == pytest.approx(240 * 0.5)  # all history re-costed
+        assert await _sums(hass, "sensor.esb_electricity_usage_history") == usage  # kWh untouched
+
+
+@pytest.mark.asyncio
+async def test_refresh_after_backfill_imports_recent_days(recorder_mock, hass, enable_custom_integrations, entry, session):
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", AsyncMock(return_value=_ten_days_of_usage())):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
+
+        with patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+        ) as importer:
+            await entry.runtime_data.coordinator.async_refresh()
+            await hass.async_block_till_done()
+
+    usage_calls = [c for c in importer.call_args_list if c.args[1] == "sensor.esb_electricity_usage_history"]
+    hours = usage_calls[-1].args[2]
+    assert hours[-1][0] - hours[0][0] == timedelta(days=7)
