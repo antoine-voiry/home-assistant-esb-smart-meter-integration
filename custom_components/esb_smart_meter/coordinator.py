@@ -4,6 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -26,6 +27,8 @@ class ESBRuntimeData:
 
     coordinator: "ESBDataUpdateCoordinator"
     session: aiohttp.ClientSession
+    # entry.data and entry.options at setup; None makes any update reload
+    settings: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
 type ESBConfigEntry = ConfigEntry[ESBRuntimeData]

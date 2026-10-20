@@ -125,9 +125,13 @@ async def test_reauth_rejects_empty_password(recorder_mock, hass, enable_custom_
 async def test_reauth_of_loaded_entry_reloads_once_via_listener(
     recorder_mock, hass, enable_custom_integrations, config_entry
 ):
-    from custom_components.esb_smart_meter import _async_reload_on_update
+    from custom_components.esb_smart_meter import _async_reload_on_update, _settings_snapshot
+    from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 
     async def fake_setup(hass, entry):
+        entry.runtime_data = ESBRuntimeData(
+            coordinator=MagicMock(), session=MagicMock(), settings=_settings_snapshot(entry)
+        )
         entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
         return True
 

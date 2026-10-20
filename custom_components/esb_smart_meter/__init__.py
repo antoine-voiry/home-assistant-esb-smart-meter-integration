@@ -2,6 +2,7 @@
 
 import logging
 from datetime import timedelta
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
@@ -57,9 +58,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
         await session.close()
         raise
 
-    entry.runtime_data = ESBRuntimeData(coordinator=coordinator, session=session)
+    entry.runtime_data = ESBRuntimeData(coordinator=coordinator, session=session, settings=_settings_snapshot(entry))
 
-    # Options and tariff subentry changes take effect through a reload
+    # Option changes reload; tariff subentry changes re-cost from the data in memory
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
 
     # Forward setup to sensor platform
@@ -68,8 +69,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
     return True
 
 
+def _settings_snapshot(entry: ESBConfigEntry) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return copies of the entry settings that need a reload when they change."""
+    return dict(entry.data), dict(entry.options)
+
+
 async def _async_reload_on_update(hass: HomeAssistant, entry: ESBConfigEntry) -> None:
-    """Reload so changed options and tariff periods take effect."""
+    """Reload for changed credentials or options; re-import for tariff period changes.
+
+    Only subentries changed means a tariff period was added, edited or removed:
+    the sensors re-cost from the data already downloaded, so there is no new ESB
+    login or download and the circuit breaker keeps its state.
+    """
+    runtime = entry.runtime_data
+    if runtime.settings == _settings_snapshot(entry):
+        runtime.coordinator.async_update_listeners()
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

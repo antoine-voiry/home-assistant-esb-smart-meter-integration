@@ -1,6 +1,6 @@
 """Tests for the tariff period subentry flow."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import ConfigSubentryData
@@ -8,6 +8,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.esb_smart_meter.const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 
 MPRN = "12345678901"
 RATES = {
@@ -110,10 +111,15 @@ async def test_reconfigure_updates_period(recorder_mock, hass, enable_custom_int
 
 
 @pytest.mark.asyncio
-async def test_subentry_change_reloads_entry(recorder_mock, hass, enable_custom_integrations, entry):
-    async def fake_setup(hass, entry):
-        from custom_components.esb_smart_meter import _async_reload_on_update
+async def test_subentry_change_updates_sensors_without_reload(recorder_mock, hass, enable_custom_integrations, entry):
+    coordinator = MagicMock()
 
+    async def fake_setup(hass, entry):
+        from custom_components.esb_smart_meter import _async_reload_on_update, _settings_snapshot
+
+        entry.runtime_data = ESBRuntimeData(
+            coordinator=coordinator, session=MagicMock(), settings=_settings_snapshot(entry)
+        )
         entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
         return True
 
@@ -127,4 +133,6 @@ async def test_subentry_change_reloads_entry(recorder_mock, hass, enable_custom_
         await hass.config_entries.subentries.async_configure(result["flow_id"], RATES)
         await hass.async_block_till_done()
 
-    assert setup.call_count == 2
+    assert len(entry.subentries) == 2
+    assert setup.call_count == 1  # no reload, so no new ESB login or download
+    coordinator.async_update_listeners.assert_called_once_with()

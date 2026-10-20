@@ -146,11 +146,12 @@ async def test_backfill_cost_and_recost_after_tariff_change(recorder_mock, hass,
 
         subentry = next(iter(entry.subentries.values()))
         hass.config_entries.async_update_subentry(entry, subentry, data={**TARIFF, "day_rate": 0.5, "night_rate": 0.5, "peak_rate": 0.5})
-        await hass.async_block_till_done()  # update listener reloads the entry
+        await hass.async_block_till_done()  # update listener re-imports from the data in memory
 
         cost = await _sums(hass, "sensor.esb_electricity_usage_cost_history")
         assert cost[-1] == pytest.approx(240 * 0.5)  # all history re-costed
         assert await _sums(hass, "sensor.esb_electricity_usage_history") == usage  # kWh untouched
+        fetch.assert_awaited_once()  # no re-download on a tariff change
 
 
 @pytest.mark.asyncio

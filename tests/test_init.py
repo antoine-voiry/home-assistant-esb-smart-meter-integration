@@ -192,21 +192,58 @@ class TestAsyncSetupEntry:
             mock_session.close.assert_awaited_once()
             mock_hass.config_entries.async_forward_entry_setups.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_async_setup_entry_reloads_on_update(self, mock_hass, mock_entry):
-        """Option and tariff subentry changes reload the entry so they take effect."""
+    async def _set_up(self, mock_hass, mock_entry):
         with patch("custom_components.esb_smart_meter.create_esb_session"), patch(
             "custom_components.esb_smart_meter.ESBDataApi"
         ), patch("custom_components.esb_smart_meter.ESBDataUpdateCoordinator") as mock_coordinator_class:
             mock_coordinator_class.return_value.async_config_entry_first_refresh = AsyncMock()
             await async_setup_entry(mock_hass, mock_entry)
+        mock_hass.config_entries.async_reload = AsyncMock()
+        return mock_coordinator_class.return_value
 
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_registers_update_listener(self, mock_hass, mock_entry):
+        """Entry updates go through the update listener."""
+        await self._set_up(mock_hass, mock_entry)
         mock_entry.add_update_listener.assert_called_once_with(_async_reload_on_update)
 
     @pytest.mark.asyncio
-    async def test_reload_on_update(self, mock_hass, mock_entry):
-        mock_hass.config_entries.async_reload = AsyncMock()
+    async def test_options_change_reloads(self, mock_hass, mock_entry):
+        coordinator = await self._set_up(mock_hass, mock_entry)
+        mock_entry.options = {CONF_UPDATE_INTERVAL: 12}
+
         await _async_reload_on_update(mock_hass, mock_entry)
+
+        mock_hass.config_entries.async_reload.assert_awaited_once_with(mock_entry.entry_id)
+        coordinator.async_update_listeners.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_data_change_reloads(self, mock_hass, mock_entry):
+        """A new password (reauth) changes entry.data and needs a fresh login."""
+        await self._set_up(mock_hass, mock_entry)
+        mock_entry.data = {**mock_entry.data, CONF_PASSWORD: "new"}
+
+        await _async_reload_on_update(mock_hass, mock_entry)
+
+        mock_hass.config_entries.async_reload.assert_awaited_once_with(mock_entry.entry_id)
+
+    @pytest.mark.asyncio
+    async def test_subentry_only_change_updates_sensors_without_reload(self, mock_hass, mock_entry):
+        """Tariff edits re-cost from the data in memory: no reload, no new download."""
+        coordinator = await self._set_up(mock_hass, mock_entry)
+
+        await _async_reload_on_update(mock_hass, mock_entry)
+
+        mock_hass.config_entries.async_reload.assert_not_awaited()
+        coordinator.async_update_listeners.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_runtime_data_without_snapshot_reloads(self, mock_hass, mock_entry):
+        mock_hass.config_entries.async_reload = AsyncMock()
+        mock_entry.runtime_data = ESBRuntimeData(coordinator=MagicMock(), session=MagicMock())
+
+        await _async_reload_on_update(mock_hass, mock_entry)
+
         mock_hass.config_entries.async_reload.assert_awaited_once_with(mock_entry.entry_id)
 
 
