@@ -16,7 +16,6 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RETRIES = 3  # Max 3 authentication attempts per day (reduced for stealth)
 DEFAULT_RETRY_WAIT = 1800  # Wait 30 minutes (1800 seconds) between retries
 MAX_CSV_SIZE_MB = 10  # Maximum CSV response size in MB
-MAX_DATA_AGE_DAYS = 90  # Maximum age of data to keep in memory
 
 # Stealth and timing constants
 STARTUP_DELAY_MIN = 300  # Minimum delay after HA boot (5 minutes)

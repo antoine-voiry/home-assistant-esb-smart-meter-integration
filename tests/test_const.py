@@ -15,7 +15,6 @@ from custom_components.esb_smart_meter.const import (
     DOMAIN,
     MANUFACTURER,
     MAX_CSV_SIZE_MB,
-    MAX_DATA_AGE_DAYS,
     MODEL,
 )
 
@@ -38,7 +37,6 @@ def test_default_values():
     assert DEFAULT_TIMEOUT == 30
     assert DEFAULT_MAX_RETRIES == 3  # Changed for stealth (max 3 attempts per day)
     assert MAX_CSV_SIZE_MB == 10
-    assert MAX_DATA_AGE_DAYS == 90
 
 
 def test_csv_constants():
