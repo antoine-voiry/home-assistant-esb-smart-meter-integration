@@ -119,3 +119,26 @@ async def test_reauth_rejects_empty_password(recorder_mock, hass, enable_custom_
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_PASSWORD: "empty_password"}
     assert config_entry.data[CONF_PASSWORD] == "old"
+
+
+@pytest.mark.asyncio
+async def test_reauth_of_loaded_entry_reloads_once_via_listener(
+    recorder_mock, hass, enable_custom_integrations, config_entry
+):
+    from custom_components.esb_smart_meter import _async_reload_on_update
+
+    async def fake_setup(hass, entry):
+        entry.async_on_unload(entry.add_update_listener(_async_reload_on_update))
+        return True
+
+    with patch("custom_components.esb_smart_meter.async_setup_entry", side_effect=fake_setup) as setup, patch(
+        "custom_components.esb_smart_meter.async_unload_entry", return_value=True
+    ):
+        await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+        result = await config_entry.start_reauth_flow(hass)
+        await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_PASSWORD: "new"})
+        await hass.async_block_till_done()
+
+    assert setup.call_count == 2
+    assert config_entry.data[CONF_PASSWORD] == "new"

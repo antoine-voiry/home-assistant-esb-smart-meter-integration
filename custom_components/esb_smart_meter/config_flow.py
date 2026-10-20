@@ -6,6 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigSubentryFlow
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
@@ -17,8 +18,10 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
     MPRN_LENGTH,
+    SUBENTRY_TARIFF,
 )
 from .session_manager import SessionManager
+from .tariff_flow import TariffSubentryFlowHandler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +42,14 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
         """Get the options flow for this handler."""
         return ESBSmartMeterOptionsFlow(config_entry)
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: config_entries.ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Tariff periods are added as subentries."""
+        return {SUBENTRY_TARIFF: TariffSubentryFlowHandler}
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
@@ -94,7 +105,13 @@ class ESBSmartMeterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not password.strip():
                 errors[CONF_PASSWORD] = "empty_password"
             else:
-                return self.async_update_reload_and_abort(entry, data_updates={CONF_PASSWORD: password})
+                # A loaded entry reloads through its update listener (HA reports
+                # update_reload_and_abort when one exists); an entry whose setup failed
+                # on the old password has no listener, so schedule the reload here.
+                self.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_PASSWORD: password})
+                if entry.state is not config_entries.ConfigEntryState.LOADED:
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
 
         return self.async_show_form(
             step_id="reauth_confirm",

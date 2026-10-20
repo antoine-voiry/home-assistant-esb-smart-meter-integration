@@ -138,5 +138,78 @@
         "name": "Circuit breaker status"
       }
     }
+  },
+  "config_subentries": {
+    "tariff": {
+      "entry_type": "Tariff period",
+      "initiate_flow": {
+        "user": "Add tariff period",
+        "reconfigure": "Edit tariff period"
+      },
+      "step": {
+        "user": {
+          "title": "Start from",
+          "description": "Prefill the rates from a supplier's smart tariff, or start blank.",
+          "data": {
+            "preset": "Tariff"
+          }
+        },
+        "rates": {
+          "title": "Tariff period",
+          "description": "Rates include VAT, as printed on your bill. Supplier presets use example rates from October 2026, so check them against your bill. A period applies from its start date until the next period starts; add a new period when prices change.",
+          "data": {
+            "effective_from": "Start date",
+            "day_rate": "Day rate",
+            "night_rate": "Night rate",
+            "peak_rate": "Peak rate",
+            "standing_charge": "Standing charge",
+            "export_rate": "Export rate",
+            "night_start": "Night starts (hour)",
+            "night_end": "Night ends (hour)",
+            "peak_start": "Peak starts (hour)",
+            "peak_end": "Peak ends (hour)",
+            "peak_weekdays_only": "Peak on weekdays only"
+          },
+          "data_description": {
+            "export_rate": "Leave at 0 if you don't export or aren't paid for export",
+            "night_end": "First hour that is no longer night, e.g. 8 for 23:00–08:00",
+            "peak_end": "First hour that is no longer peak, e.g. 19 for 17:00–19:00"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit tariff period",
+          "data": {
+            "effective_from": "Start date",
+            "day_rate": "Day rate",
+            "night_rate": "Night rate",
+            "peak_rate": "Peak rate",
+            "standing_charge": "Standing charge",
+            "export_rate": "Export rate",
+            "night_start": "Night starts (hour)",
+            "night_end": "Night ends (hour)",
+            "peak_start": "Peak starts (hour)",
+            "peak_end": "Peak ends (hour)",
+            "peak_weekdays_only": "Peak on weekdays only"
+          }
+        }
+      },
+      "error": {
+        "duplicate_period": "Another tariff period already starts on this date",
+        "empty_band": "Start and end hour must be different",
+        "peak_overlaps_night": "Peak hours must not overlap night hours"
+      },
+      "abort": {
+        "reconfigure_successful": "Tariff period updated"
+      }
+    }
+  },
+  "selector": {
+    "preset": {
+      "options": {
+        "sse_airtricity_smart": "SSE Airtricity smart (October 2026 example rates)",
+        "bord_gais_smart": "Bord Gáis Energy smart (October 2026 example rates)",
+        "custom": "Custom (enter your own rates)"
+      }
+    }
   }
 }

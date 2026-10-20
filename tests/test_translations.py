@@ -39,3 +39,17 @@ def test_reauth_flow_is_translated():
     assert step["data"]["password"].strip()
     assert config["abort"]["reauth_successful"].strip()
     assert config["error"]["empty_password"].strip()
+
+
+def test_tariff_subentry_is_translated():
+    strings = _load("translations/en.json")
+    tariff = strings["config_subentries"]["tariff"]
+    assert tariff["initiate_flow"]["user"].strip()
+    assert set(tariff["step"]) == {"user", "rates", "reconfigure"}
+    assert set(tariff["error"]) == {"duplicate_period", "empty_band", "peak_overlaps_night"}
+    assert set(strings["selector"]["preset"]["options"]) == {"sse_airtricity_smart", "bord_gais_smart", "custom"}
+    for step in ("rates", "reconfigure"):
+        assert set(tariff["step"][step]["data"]) == {
+            "effective_from", "day_rate", "night_rate", "peak_rate", "standing_charge", "export_rate",
+            "night_start", "night_end", "peak_start", "peak_end", "peak_weekdays_only",
+        }
