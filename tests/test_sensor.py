@@ -282,6 +282,8 @@ class TestBaseSensor:
         with patch(
             "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
         ), patch(
+            "custom_components.esb_smart_meter.sensor.async_last_statistic_start", new=AsyncMock(return_value=None)
+        ), patch(
             "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics",
             new=AsyncMock(return_value=6.641),
         ) as mock_import:
@@ -802,12 +804,33 @@ class TestHistorySensorRefreshHooks:
         with patch(
             "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
         ), patch(
+            "custom_components.esb_smart_meter.sensor.async_last_statistic_start", new=AsyncMock(return_value=None)
+        ), patch(
             "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
         ) as importer:
             await sensor._async_import_statistics()
         hours = importer.call_args.args[2]
         assert hours[-1][0] - hours[0][0] == timedelta(days=7)
         assert importer.call_args.kwargs["unit"] == "kWh"
+
+    @pytest.mark.asyncio
+    async def test_later_imports_resume_from_last_stored_hour(self):
+        """After an outage longer than the window, import from the hour after the last stored one."""
+        sensor = self._sensor(data=self._ten_days())
+        hourly = sensor.coordinator.data.hourly_usage()
+        last_stored = hourly[-1][0] - timedelta(days=9)
+        with patch(
+            "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_last_statistic_start",
+            new=AsyncMock(return_value=last_stored),
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+        ) as importer:
+            await sensor._async_import_statistics()
+        hours = importer.call_args.args[2]
+        assert hours[0][0] == last_stored + timedelta(hours=1)
+        assert hours[-1][0] == hourly[-1][0]
 
     def test_coordinator_update_schedules_import(self):
         sensor = self._sensor(data=None)
@@ -901,6 +924,8 @@ class TestCostHistorySensors:
         with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state), patch(
             "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
         ), patch(
+            "custom_components.esb_smart_meter.sensor.async_last_statistic_start", new=AsyncMock(return_value=None)
+        ), patch(
             "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
         ) as imp:
             await sensor._async_import_statistics()
@@ -916,6 +941,8 @@ class TestCostHistorySensors:
         state.async_set_fingerprint = AsyncMock()
         with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state), patch(
             "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_last_statistic_start", new=AsyncMock(return_value=None)
         ), patch(
             "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
         ) as imp:

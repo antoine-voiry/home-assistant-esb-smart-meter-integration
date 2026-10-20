@@ -2,7 +2,7 @@
 
 from abc import abstractmethod
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory, UnitOfEnergy
@@ -15,7 +15,12 @@ from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator
 from .import_state import ImportState
 from .models import ESBData
-from .statistics import async_has_statistic_at, async_import_hourly_statistics, recent_hours
+from .statistics import (
+    async_has_statistic_at,
+    async_import_hourly_statistics,
+    async_last_statistic_start,
+    recent_hours,
+)
 from .tariff import export_credits, fingerprint, tariff_periods, usage_costs
 
 
@@ -438,9 +443,11 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
         if not hourly:
             return
         full = await self._needs_full_import(hourly)
-        total = await async_import_hourly_statistics(
-            self.hass, self.entity_id, hourly if full else recent_hours(hourly), unit=self._statistics_unit
-        )
+        if not full:
+            # Resume from the last stored hour so an outage longer than the window leaves no gap
+            last = await async_last_statistic_start(self.hass, self.entity_id)
+            hourly = recent_hours(hourly, resume_from=last + timedelta(hours=1) if last else None)
+        total = await async_import_hourly_statistics(self.hass, self.entity_id, hourly, unit=self._statistics_unit)
         if full:
             await self._async_full_import_done()
         if total is not None:

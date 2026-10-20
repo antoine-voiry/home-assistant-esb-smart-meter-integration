@@ -1,7 +1,7 @@
 """Long-term statistics import for ESB Smart Meter integration."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import (
@@ -11,6 +11,7 @@ from homeassistant.components.recorder.models import (
 )
 from homeassistant.components.recorder.statistics import (
     async_import_statistics,
+    get_last_statistics,
     statistics_during_period,
 )
 from homeassistant.const import UnitOfEnergy
@@ -98,11 +99,31 @@ async def async_has_statistic_at(hass: HomeAssistant, statistic_id: str, start: 
     return bool(rows.get(statistic_id))
 
 
+async def async_last_statistic_start(hass: HomeAssistant, statistic_id: str) -> datetime | None:
+    """Return the start (UTC) of the newest stored hourly statistic, or None if there is none."""
+    rows = await get_instance(hass).async_add_executor_job(
+        get_last_statistics, hass, 1, statistic_id, True, {"sum"}
+    )
+    series = rows.get(statistic_id)
+    if not series:
+        return None
+    return datetime.fromtimestamp(series[0]["start"], timezone.utc)
+
+
 def recent_hours(
-    hourly: list[tuple[datetime, float]], days: int = RECENT_IMPORT_DAYS
+    hourly: list[tuple[datetime, float]],
+    days: int = RECENT_IMPORT_DAYS,
+    resume_from: datetime | None = None,
 ) -> list[tuple[datetime, float]]:
-    """Return the buckets within `days` of the newest one (ESB data lags, so not 'now')."""
+    """Return the buckets within `days` of the newest one (ESB data lags, so not 'now').
+
+    `hourly` must be ascending. With `resume_from` (the first hour not yet stored),
+    the window starts there instead when that is earlier, so an outage longer
+    than `days` leaves no gap.
+    """
     if not hourly:
         return []
     since = hourly[-1][0] - timedelta(days=days)
+    if resume_from is not None:
+        since = min(since, resume_from)
     return [(hour, value) for hour, value in hourly if hour >= since]

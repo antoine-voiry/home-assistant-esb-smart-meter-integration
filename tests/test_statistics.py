@@ -14,6 +14,7 @@ from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.statistics import (
     async_has_statistic_at,
     async_import_hourly_statistics,
+    async_last_statistic_start,
     recent_hours,
 )
 
@@ -152,3 +153,35 @@ def test_recent_hours_keeps_last_days_of_download():
     assert recent[-1][0] == newest
     assert len(recent) == 7 * 24 + 1
     assert recent_hours([], days=7) == []
+
+
+def test_recent_hours_resumes_from_last_stored_hour_when_older():
+    newest = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+    hourly = [(newest - timedelta(hours=h), 1.0) for h in range(400, -1, -1)]
+    resume = newest - timedelta(days=12)
+
+    recent = recent_hours(hourly, days=7, resume_from=resume)
+
+    assert recent[0][0] == resume
+    assert recent[-1][0] == newest
+    assert len(recent) == 12 * 24 + 1
+
+
+def test_recent_hours_keeps_window_when_resume_is_newer():
+    newest = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+    hourly = [(newest - timedelta(hours=h), 1.0) for h in range(400, -1, -1)]
+
+    recent = recent_hours(hourly, days=7, resume_from=newest + timedelta(hours=1))
+
+    assert recent[0][0] == newest - timedelta(days=7)
+    assert len(recent) == 7 * 24 + 1
+
+
+@pytest.mark.asyncio
+async def test_last_statistic_start(recorder_mock, hass, hourly_usage):
+    assert await async_last_statistic_start(hass, USAGE_ID) is None
+
+    await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
+    await async_wait_recording_done(hass)
+
+    assert await async_last_statistic_start(hass, USAGE_ID) == hourly_usage[-1][0]

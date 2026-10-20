@@ -95,15 +95,15 @@ async def test_rejected_password_at_setup_starts_reauth(
     session.close.assert_awaited_once()
 
 
-def _ten_days_of_usage() -> ESBData:
-    end = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
+def _ten_days_of_usage(days_ago: int = 1, days: int = 10) -> ESBData:
+    end = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=days_ago)
     rows = [
         {
             "Read Date and End Time": (end - timedelta(minutes=30 * i)).strftime("%d-%m-%Y %H:%M"),
             "Read Value": "0.5",
             "Read Type": "Active Import Interval (kWh)",
         }
-        for i in range(480)
+        for i in range(days * 48)
     ]
     return ESBData(data=rows)
 
@@ -169,3 +169,34 @@ async def test_refresh_after_backfill_imports_recent_days(recorder_mock, hass, e
     usage_calls = [c for c in importer.call_args_list if c.args[1] == "sensor.esb_electricity_usage_history"]
     hours = usage_calls[-1].args[2]
     assert hours[-1][0] - hours[0][0] == timedelta(days=7)
+
+
+@pytest.mark.asyncio
+async def test_refresh_after_long_outage_fills_the_gap(recorder_mock, hass, enable_custom_integrations, entry, session):
+    """A download with no overlap in the 7-day window still continues from the last stored hour."""
+    fetch = AsyncMock(return_value=_ten_days_of_usage(days_ago=11))
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await async_wait_recording_done(hass)
+
+        # ESB returns the whole history, now ten days newer: more than the 7-day window
+        fetch.return_value = _ten_days_of_usage(days_ago=1, days=20)
+        await entry.runtime_data.coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    await async_wait_recording_done(hass)
+    rows = await hass.async_add_executor_job(
+        statistics_during_period,
+        hass,
+        dt_util.utcnow() - timedelta(days=30),
+        None,
+        {"sensor.esb_electricity_usage_history"},
+        "hour",
+        None,
+        {"sum"},
+    )
+    starts = [row["start"] for row in rows["sensor.esb_electricity_usage_history"]]
+    assert len(starts) == 480  # 20 days, nothing skipped
+    assert all(b - a == 3600 for a, b in zip(starts, starts[1:]))
+    assert rows["sensor.esb_electricity_usage_history"][-1]["sum"] == pytest.approx(480.0)
