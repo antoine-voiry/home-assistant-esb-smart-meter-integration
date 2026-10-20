@@ -428,6 +428,10 @@ Add one **tariff period** per price change: **Settings** → **Devices & Service
    costed with the period in force on that day; hours before your first period get no cost.
 
 Editing, adding or removing a period re-costs all imported history right away, from the data already downloaded: there is no new ESB login or download.
+If a change leaves hours with no period (for example you move the first period's
+start date later, or remove every period), those hours go back to no cost. ESB only
+provides about two years of readings, so hours older than ESB's ~2-year window keep
+the costs they had.
 
 Hourly cost = kWh × band rate + standing charge ÷ 24. The PSO levy isn't included.
 Export credit = exported kWh × export rate.

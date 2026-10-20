@@ -440,16 +440,22 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
         if self.coordinator.data is None:
             return
         hourly = self._hourly(esb_data=self.coordinator.data)
-        if not hourly:
-            return
         full = await self._needs_full_import(hourly)
-        if not full:
+        if full:
+            series = await self._async_full_series(hourly)
+        elif hourly:
             # Resume from the last stored hour so an outage longer than the window leaves no gap
             last = await async_last_statistic_start(self.hass, self.entity_id)
-            hourly = recent_hours(hourly, resume_from=last + timedelta(hours=1) if last else None)
-        total = await async_import_hourly_statistics(self.hass, self.entity_id, hourly, unit=self._statistics_unit)
+            series = recent_hours(hourly, resume_from=last + timedelta(hours=1) if last else None)
+        else:
+            return
+        total = (
+            await async_import_hourly_statistics(self.hass, self.entity_id, series, unit=self._statistics_unit)
+            if series
+            else None
+        )
         if full:
-            await self._async_full_import_done()
+            await self._async_full_import_done(hourly)
         if total is not None:
             self._cumulative = total
             if self._total_sensor is not None:
@@ -457,9 +463,13 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
 
     async def _needs_full_import(self, hourly: list[tuple[Any, float]]) -> bool:
         """Backfill when the oldest downloaded hour isn't in the statistics yet."""
-        return not await async_has_statistic_at(self.hass, self.entity_id, hourly[0][0])
+        return bool(hourly) and not await async_has_statistic_at(self.hass, self.entity_id, hourly[0][0])
 
-    async def _async_full_import_done(self) -> None:
+    async def _async_full_series(self, hourly: list[tuple[Any, float]]) -> list[tuple[Any, float]]:
+        """Return the rows a full import writes; series that must clear old rows override this."""
+        return hourly
+
+    async def _async_full_import_done(self, hourly: list[tuple[Any, float]]) -> None:
         """Run after a full import; series that track their inputs override this."""
 
 
@@ -518,8 +528,32 @@ class BaseCostHistorySensor(BaseHistorySensor):
         stored = await self._import_state().async_get_fingerprint()
         return stored != fingerprint(tariff_periods(self._entry))
 
-    async def _async_full_import_done(self) -> None:
-        await self._import_state().async_set_fingerprint(fingerprint(tariff_periods(self._entry)))
+    async def _async_full_series(self, hourly: list[tuple[Any, float]]) -> list[tuple[Any, float]]:
+        """Prepend zero-cost rows for hours costed before but no longer covered by a period.
+
+        Their stored sums then equal the baseline, so they add no cost. Hours older
+        than the download can't be rewritten and keep their old costs.
+        """
+        previous_first = await self._import_state().async_get_first_hour()
+        downloaded = self._downloaded(esb_data=self.coordinator.data)
+        if previous_first is None or not downloaded:
+            return hourly
+        hour = max(previous_first, downloaded[0][0])
+        end = hourly[0][0] if hourly else downloaded[-1][0] + timedelta(hours=1)
+        zeros: list[tuple[Any, float]] = []
+        while hour < end:
+            zeros.append((hour, 0.0))
+            hour += timedelta(hours=1)
+        return zeros + hourly
+
+    async def _async_full_import_done(self, hourly: list[tuple[Any, float]]) -> None:
+        await self._import_state().async_set_fingerprint(
+            fingerprint(tariff_periods(self._entry)), hourly[0][0] if hourly else None
+        )
+
+    @abstractmethod
+    def _downloaded(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        """Return the downloaded hourly kWh this series is costed from."""
 
 
 class UsageCostHistorySensor(BaseCostHistorySensor):
@@ -532,8 +566,11 @@ class UsageCostHistorySensor(BaseCostHistorySensor):
         super().__init__(coordinator=coordinator, mprn=mprn, translation_key="usage_cost_history", entry=entry)
         self._attr_unique_id = f"{mprn}_usage_cost_history"
 
+    def _downloaded(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return esb_data.hourly_usage()
+
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
-        return usage_costs(esb_data.hourly_usage(), tariff_periods(self._entry))
+        return usage_costs(self._downloaded(esb_data=esb_data), tariff_periods(self._entry))
 
 
 class ExportCreditHistorySensor(BaseCostHistorySensor):
@@ -546,8 +583,11 @@ class ExportCreditHistorySensor(BaseCostHistorySensor):
         super().__init__(coordinator=coordinator, mprn=mprn, translation_key="export_credit_history", entry=entry)
         self._attr_unique_id = f"{mprn}_export_credit_history"
 
+    def _downloaded(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return esb_data.hourly_export()
+
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
-        return export_credits(esb_data.hourly_export(), tariff_periods(self._entry))
+        return export_credits(self._downloaded(esb_data=esb_data), tariff_periods(self._entry))
 
 
 class BaseTotalSensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):

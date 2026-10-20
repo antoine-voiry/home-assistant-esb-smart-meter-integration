@@ -1,7 +1,7 @@
 """Integration tests for sensor.py with coordinator pattern."""
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from custom_components.esb_smart_meter.const import DOMAIN
 from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.models import ESBData
-from custom_components.esb_smart_meter.tariff import TariffPeriod, fingerprint
+from custom_components.esb_smart_meter.tariff import TariffPeriod, fingerprint, usage_costs
 from custom_components.esb_smart_meter.sensor import (
     UsageCostHistorySensor,
     ExportCreditHistorySensor,
@@ -898,6 +898,98 @@ class TestCostHistorySensors:
         export_rate=0.2,
     )
 
+    @staticmethod
+    def _state(stored_fingerprint, first_hour):
+        state = MagicMock()
+        state.async_get_fingerprint = AsyncMock(return_value=stored_fingerprint)
+        state.async_get_first_hour = AsyncMock(return_value=first_hour)
+        state.async_set_fingerprint = AsyncMock()
+        return state
+
+    # 2026-01-10 00:00 to 2026-01-11 23:00 UTC (= Dublin in winter), 1 kWh per hour
+    OLDEST = datetime(2026, 1, 10, tzinfo=timezone.utc)
+    NEWEST = datetime(2026, 1, 11, 23, tzinfo=timezone.utc)
+
+    def _two_days_sensor(self, *periods):
+        sensor = self._sensor(UsageCostHistorySensor, *periods)
+        start = datetime(2026, 1, 10, 0, 30)
+        sensor.coordinator.data = ESBData(
+            data=[
+                {
+                    "Read Date and End Time": (start + timedelta(minutes=30 * i)).strftime("%d-%m-%Y %H:%M"),
+                    "Read Value": "0.5",
+                    "Read Type": "Active Import Interval (kWh)",
+                }
+                for i in range(96)
+            ]
+        )
+        return sensor
+
+    async def _full_recost(self, sensor, previous_first):
+        state = self._state("stale", previous_first)
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state), patch(
+            "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+        ) as imp:
+            await sensor._async_import_statistics()
+        return (imp.call_args.args[2] if imp.await_count else []), state
+
+    @pytest.mark.asyncio
+    async def test_first_hour_moved_later_zeroes_hours_no_longer_costed(self):
+        later = TariffPeriod(effective_from=date(2026, 1, 11), day_rate=0.3, night_rate=0.3, peak_rate=0.3, standing_charge=0.0)
+        sensor = self._two_days_sensor(later)
+
+        series, state = await self._full_recost(sensor, previous_first=self.OLDEST + timedelta(hours=2))
+
+        new_first = datetime(2026, 1, 11, tzinfo=timezone.utc)
+        zeros = [row for row in series if row[0] < new_first]
+        assert [hour for hour, _ in zeros] == [self.OLDEST + timedelta(hours=h) for h in range(2, 24)]
+        assert all(value == 0.0 for _, value in zeros)
+        assert series[len(zeros)] == (new_first, pytest.approx(0.3))
+        assert series[-1][0] == self.NEWEST
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([later]), new_first)
+
+    @pytest.mark.asyncio
+    async def test_zeroing_starts_at_oldest_downloaded_hour(self):
+        """Hours older than the download can't be rewritten."""
+        later = TariffPeriod(effective_from=date(2026, 1, 11), day_rate=0.3, night_rate=0.3, peak_rate=0.3, standing_charge=0.0)
+        sensor = self._two_days_sensor(later)
+
+        series, _state = await self._full_recost(sensor, previous_first=datetime(2025, 6, 1, tzinfo=timezone.utc))
+
+        assert series[0] == (self.OLDEST, 0.0)
+        assert len(series) == 48
+
+    @pytest.mark.asyncio
+    async def test_all_periods_removed_zeroes_previously_costed_range(self):
+        sensor = self._two_days_sensor()
+
+        series, state = await self._full_recost(sensor, previous_first=self.OLDEST + timedelta(hours=12))
+
+        assert [hour for hour, _ in series] == [self.OLDEST + timedelta(hours=h) for h in range(12, 48)]
+        assert all(value == 0.0 for _, value in series)
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([]), None)
+
+    @pytest.mark.asyncio
+    async def test_first_hour_moved_earlier_adds_no_zero_rows(self):
+        sensor = self._two_days_sensor(self.PERIOD)
+
+        series, state = await self._full_recost(sensor, previous_first=self.OLDEST + timedelta(hours=24))
+
+        assert series == usage_costs(sensor.coordinator.data.hourly_usage(), [self.PERIOD])
+        assert all(value > 0 for _, value in series)
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([self.PERIOD]), self.OLDEST)
+
+    @pytest.mark.asyncio
+    async def test_no_periods_and_nothing_costed_before_imports_nothing(self):
+        sensor = self._two_days_sensor()
+
+        series, state = await self._full_recost(sensor, previous_first=None)
+
+        assert series == []
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([]), None)
+
     def test_metadata(self):
         sensor = self._sensor(UsageCostHistorySensor, self.PERIOD)
         assert sensor.unique_id == "12345678901_usage_cost_history"
@@ -911,16 +1003,16 @@ class TestCostHistorySensors:
     @pytest.mark.asyncio
     async def test_no_tariffs_imports_nothing(self):
         sensor = self._sensor(UsageCostHistorySensor)
-        with patch("custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock()) as imp:
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=self._state(None, None)), patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock()
+        ) as imp:
             await sensor._async_import_statistics()
         imp.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_changed_tariffs_trigger_full_import_and_store_fingerprint(self):
         sensor = self._sensor(UsageCostHistorySensor, self.PERIOD)
-        state = MagicMock()
-        state.async_get_fingerprint = AsyncMock(return_value="stale")
-        state.async_set_fingerprint = AsyncMock()
+        state = self._state("stale", None)
         with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state), patch(
             "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
         ), patch(
@@ -931,7 +1023,8 @@ class TestCostHistorySensors:
             await sensor._async_import_statistics()
 
         assert imp.call_args.kwargs["unit"] == "EUR"
-        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([self.PERIOD]))
+        first_hour = sensor.coordinator.data.hourly_usage()[0][0]
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([self.PERIOD]), first_hour)
 
     @pytest.mark.asyncio
     async def test_unchanged_tariffs_import_recent_only(self):

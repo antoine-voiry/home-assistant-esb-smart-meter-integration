@@ -1,6 +1,6 @@
 """End-to-end setup on a real Home Assistant instance (ESB transport stubbed)."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import homeassistant.util.dt as dt_util
@@ -14,7 +14,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import asy
 
 from custom_components.esb_smart_meter.api_client import InvalidAuthException
 from custom_components.esb_smart_meter.const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
-from custom_components.esb_smart_meter.models import ESBData
+from custom_components.esb_smart_meter.models import DUBLIN_TZ, ESBData
 
 MPRN = "12345678901"
 
@@ -201,3 +201,43 @@ async def test_refresh_after_long_outage_fills_the_gap(recorder_mock, hass, enab
     assert len(starts) == 480  # 20 days, nothing skipped
     assert all(b - a == 3600 for a, b in zip(starts, starts[1:]))
     assert rows["sensor.esb_electricity_usage_history"][-1]["sum"] == pytest.approx(480.0)
+
+
+async def _rows(hass, statistic_id):
+    await async_wait_recording_done(hass)
+    rows = await hass.async_add_executor_job(
+        statistics_during_period, hass, dt_util.utcnow() - timedelta(days=30), None, {statistic_id}, "hour", None, {"sum"}
+    )
+    return rows.get(statistic_id, [])
+
+
+@pytest.mark.asyncio
+async def test_moving_first_period_later_zeroes_costs_before_it(
+    recorder_mock, hass, enable_custom_integrations, session
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MPRN,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+        subentries_data=[ConfigSubentryData(data=TARIFF, subentry_type="tariff", title="t", unique_id="2020-01-01")],
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", AsyncMock(return_value=_ten_days_of_usage())):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        usage = await _sums(hass, "sensor.esb_electricity_usage_history")
+        assert (await _sums(hass, "sensor.esb_electricity_usage_cost_history"))[-1] == pytest.approx(240 * 0.30)
+
+        new_start = (datetime.now(DUBLIN_TZ) - timedelta(days=6)).date()
+        subentry = next(iter(entry.subentries.values()))
+        hass.config_entries.async_update_subentry(entry, subentry, data={**TARIFF, "effective_from": new_start.isoformat()})
+        await hass.async_block_till_done()
+
+        cutoff = datetime.combine(new_start, time(), DUBLIN_TZ).timestamp()
+        cost = await _rows(hass, "sensor.esb_electricity_usage_cost_history")
+        before = [row["sum"] for row in cost if row["start"] < cutoff]
+        after = [row for row in cost if row["start"] >= cutoff]
+        assert len(before) + len(after) == 240
+        assert before and all(total == pytest.approx(0.0) for total in before)  # baseline: nothing costed
+        assert cost[-1]["sum"] == pytest.approx(len(after) * 0.30)
+        assert await _sums(hass, "sensor.esb_electricity_usage_history") == usage  # kWh unchanged
