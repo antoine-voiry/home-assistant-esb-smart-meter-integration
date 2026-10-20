@@ -31,7 +31,7 @@ A comprehensive Home Assistant integration for monitoring your electricity usage
 ## ✨ Features
 
 - **📊 Twelve Time-Period Sensors**: Track usage and export for today, last 24 hours, this week, last 7 days, this month, and last 30 days
-- **📈 Two History Sensors**: Backfill long-term statistics at their real timestamps, so past usage and export appears for time delayed data (with companion Total sensors showing the running cumulative total)
+- **📈 Two History Sensors**: Backfill long-term statistics at their real timestamps, so past usage and export appears for time delayed data (with companion Total sensors showing the running cumulative total), plus two cost history sensors for usage cost and export credit
 - **🔄 Smart Caching**: Automatic data updates every 24 hours to minimize API calls and respect ESB's systems
 - **🔁 Robust Retry Logic**: 5 automatic retry attempts with 2-minute intervals on network failures
 - **⚡ Async Implementation**: Non-blocking async/await design using aiohttp for optimal Home Assistant performance
@@ -150,7 +150,7 @@ The integration validates:
 
 ## 📊 Sensors
 
-After successful setup, you'll have **sixteen energy sensors** created under a single device — twelve rolling-window sensors, two backfilled hourly history sensors, and two cumulative totals:
+After successful setup, you'll have **eighteen energy sensors** created under a single device — twelve rolling-window sensors, two backfilled hourly history sensors, two cost history sensors, and two cumulative totals:
 
 | Sensor Entity ID | Description | Time Period |
 |-----------------|-------------|-------------|
@@ -459,7 +459,8 @@ They appear under the **ESB Smart Meter** device in the statistic picker, as
 **Note**: Use the `*_history` sensors above (not the period `sensor.esb_electricity_usage_*`
 entities) for the Energy Dashboard — they carry the correct historic timestamps, so
 scrolling back to past dates shows real usage. Data appears 1-2 days after use because
-of ESB's publishing delay. The energy config page may show the History sensors as "Entity unavailable" — this is expected and harmless as they are intentionally stateless.
+of ESB's publishing delay. The energy config page may show the History sensors, and the cost history sensors, as "Entity unavailable" — this is expected and harmless as they are intentionally stateless.
+Costs are in euro, so set Home Assistant's currency to EUR (**Settings** → **System** → **General**).
 
 ### Upgrading from 1.3.x
 
