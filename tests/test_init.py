@@ -9,6 +9,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 
 from custom_components.esb_smart_meter import (
     _async_reload_on_update,
+    async_remove_entry,
     async_setup_entry,
     async_unload_entry,
 )
@@ -328,3 +329,15 @@ class TestIntegrationSetup:
             assert entry2.runtime_data.session == mock_session2
             assert entry1.runtime_data.coordinator == mock_coordinator1
             assert entry2.runtime_data.coordinator == mock_coordinator2
+
+
+@pytest.mark.asyncio
+async def test_remove_entry_deletes_import_state():
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "entry1"
+    with patch("custom_components.esb_smart_meter.ImportState") as state_cls:
+        state_cls.return_value.async_remove = AsyncMock()
+        await async_remove_entry(hass, entry)
+
+    assert [c.args for c in state_cls.call_args_list] == [(hass, "entry1", "usage_cost"), (hass, "entry1", "export_credit")]

@@ -119,6 +119,12 @@
       "export_history": {
         "name": "Export history"
       },
+      "usage_cost_history": {
+        "name": "Usage cost history"
+      },
+      "export_credit_history": {
+        "name": "Export credit history"
+      },
       "usage_total": {
         "name": "Usage total"
       },

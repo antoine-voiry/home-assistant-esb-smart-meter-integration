@@ -1,11 +1,13 @@
 """Integration tests for sensor.py with coordinator pattern."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.core import HomeAssistant
@@ -14,7 +16,10 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from custom_components.esb_smart_meter.const import DOMAIN
 from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.models import ESBData
+from custom_components.esb_smart_meter.tariff import TariffPeriod, fingerprint
 from custom_components.esb_smart_meter.sensor import (
+    UsageCostHistorySensor,
+    ExportCreditHistorySensor,
     ApiStatusSensor,
     CircuitBreakerStatusSensor,
     DataAgeSensor,
@@ -95,19 +100,20 @@ class TestAsyncSetupEntry:
         entry = MagicMock(spec=ConfigEntry)
         entry.entry_id = "test_entry_id"
         entry.runtime_data = ESBRuntimeData(coordinator=mock_coordinator, session=MagicMock())
+        entry.subentries = {}
         return entry
 
     @pytest.mark.asyncio
     async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
-        """Test that setup_entry creates all 20 sensors (period, export, history, total, diagnostic)."""
+        """Test that setup_entry creates all 22 sensors (period, export, history, total, diagnostic)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # Verify 20 sensors were created (12 period + 2 history + 2 total + 4 diagnostic)
+        # Verify 22 sensors were created (12 period + 2 history + 2 cost history + 2 total + 4 diagnostic)
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 20
+        assert len(sensors) == 22
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -125,13 +131,15 @@ class TestAsyncSetupEntry:
         # History (statistics) and their display totals
         assert isinstance(sensors[12], UsageHistorySensor)
         assert isinstance(sensors[13], ExportHistorySensor)
-        assert isinstance(sensors[14], UsageTotalSensor)
-        assert isinstance(sensors[15], ExportTotalSensor)
+        assert isinstance(sensors[14], UsageCostHistorySensor)
+        assert isinstance(sensors[15], ExportCreditHistorySensor)
+        assert isinstance(sensors[16], UsageTotalSensor)
+        assert isinstance(sensors[17], ExportTotalSensor)
         # Diagnostic sensors
-        assert isinstance(sensors[16], LastUpdateSensor)
-        assert isinstance(sensors[17], ApiStatusSensor)
-        assert isinstance(sensors[18], DataAgeSensor)
-        assert isinstance(sensors[19], CircuitBreakerStatusSensor)
+        assert isinstance(sensors[18], LastUpdateSensor)
+        assert isinstance(sensors[19], ApiStatusSensor)
+        assert isinstance(sensors[20], DataAgeSensor)
+        assert isinstance(sensors[21], CircuitBreakerStatusSensor)
 
     @pytest.mark.asyncio
     async def test_unique_ids_are_unchanged(self, mock_hass, mock_config_entry):
@@ -144,7 +152,7 @@ class TestAsyncSetupEntry:
             "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days",
             "export_today", "export_last_24_hours", "export_this_week", "export_last_7_days",
             "export_this_month", "export_last_30_days",
-            "usage_history", "export_history", "usage_total", "export_total",
+            "usage_history", "export_history", "usage_cost_history", "export_credit_history", "usage_total", "export_total",
             "last_update", "api_status", "data_age", "circuit_breaker_status",
         ]
 
@@ -830,3 +838,89 @@ class TestHistorySensorRefreshHooks:
         sensor = self._sensor(data=None)
         assert sensor.native_value is None
         assert (DOMAIN, "12345678901") in sensor.device_info["identifiers"]
+
+
+class TestCostHistorySensors:
+    """Cost series: import, fingerprint-triggered re-costing, metadata."""
+
+    @staticmethod
+    def _entry(*periods):
+        entry = MagicMock()
+        entry.entry_id = "entry1"
+        entry.subentries = {
+            str(i): SimpleNamespace(subentry_type="tariff", data=p.as_data()) for i, p in enumerate(periods)
+        }
+        return entry
+
+    @staticmethod
+    def _coordinator():
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        label = (datetime.now() - timedelta(days=1)).replace(minute=0).strftime("%d-%m-%Y %H:%M")
+        coordinator.data = ESBData(
+            data=[
+                {"Read Date and End Time": label, "Read Value": "1.0", "Read Type": "Active Import Interval (kWh)"},
+                {"Read Date and End Time": label, "Read Value": "0.5", "Read Type": "Active Export Interval (kWh)"},
+            ]
+        )
+        return coordinator
+
+    def _sensor(self, cls, *periods):
+        sensor = cls(coordinator=self._coordinator(), mprn="12345678901", entry=self._entry(*periods))
+        sensor.hass = MagicMock()
+        sensor.entity_id = "sensor.cost"
+        return sensor
+
+    PERIOD = TariffPeriod(
+        effective_from=date(2020, 1, 1), day_rate=0.3, night_rate=0.2, peak_rate=0.4, standing_charge=0.72,
+        export_rate=0.2,
+    )
+
+    def test_metadata(self):
+        sensor = self._sensor(UsageCostHistorySensor, self.PERIOD)
+        assert sensor.unique_id == "12345678901_usage_cost_history"
+        assert sensor.entity_id == "sensor.cost"
+        assert sensor.device_class == SensorDeviceClass.MONETARY
+        assert sensor.native_unit_of_measurement == "EUR"
+        assert sensor.translation_key == "usage_cost_history"
+        export = self._sensor(ExportCreditHistorySensor, self.PERIOD)
+        assert export.unique_id == "12345678901_export_credit_history"
+
+    @pytest.mark.asyncio
+    async def test_no_tariffs_imports_nothing(self):
+        sensor = self._sensor(UsageCostHistorySensor)
+        with patch("custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock()) as imp:
+            await sensor._async_import_statistics()
+        imp.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_changed_tariffs_trigger_full_import_and_store_fingerprint(self):
+        sensor = self._sensor(UsageCostHistorySensor, self.PERIOD)
+        state = MagicMock()
+        state.async_get_fingerprint = AsyncMock(return_value="stale")
+        state.async_set_fingerprint = AsyncMock()
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state), patch(
+            "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+        ) as imp:
+            await sensor._async_import_statistics()
+
+        assert imp.call_args.kwargs["unit"] == "EUR"
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([self.PERIOD]))
+
+    @pytest.mark.asyncio
+    async def test_unchanged_tariffs_import_recent_only(self):
+        sensor = self._sensor(ExportCreditHistorySensor, self.PERIOD)
+        state = MagicMock()
+        state.async_get_fingerprint = AsyncMock(return_value=fingerprint([self.PERIOD]))
+        state.async_set_fingerprint = AsyncMock()
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state), patch(
+            "custom_components.esb_smart_meter.sensor.async_has_statistic_at", new=AsyncMock(return_value=True)
+        ), patch(
+            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+        ) as imp:
+            await sensor._async_import_statistics()
+
+        hours = imp.call_args.args[2]
+        assert [round(v, 6) for _, v in hours] == [0.1]  # 0.5 kWh x EUR 0.20
+        state.async_set_fingerprint.assert_not_awaited()

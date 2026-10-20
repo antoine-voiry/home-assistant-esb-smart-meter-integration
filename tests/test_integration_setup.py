@@ -63,7 +63,7 @@ async def test_setup_names_entities_and_unloads(recorder_mock, hass, enable_cust
 
     registry = er.async_get(hass)
     entities = {e.unique_id: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
-    assert len(entities) == 20
+    assert len(entities) == 22
 
     today = entities[f"{MPRN}_today"]
     # New installs get the same documented entity ids existing installs already have

@@ -13,8 +13,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator
+from .import_state import ImportState
 from .models import ESBData
 from .statistics import async_has_statistic_at, async_import_hourly_statistics, recent_hours
+from .tariff import export_credits, fingerprint, tariff_periods, usage_costs
 
 
 # Entity ids from before entity names were translated; new installs keep them so the
@@ -26,6 +28,8 @@ _LEGACY_OBJECT_IDS = {
     **{f"export_{period}": f"esb_electricity_export_{period}" for period in (
         "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days", "history", "total",
     )},
+    "usage_cost_history": "esb_electricity_usage_cost_history",
+    "export_credit_history": "esb_electricity_export_credit_history",
     **{key: f"esb_smart_meter_{key}" for key in ("last_update", "api_status", "data_age", "circuit_breaker_status")},
 }
 
@@ -76,6 +80,8 @@ async def async_setup_entry(
         # History (imported statistics) and their display totals
         usage_history,
         export_history,
+        UsageCostHistorySensor(coordinator=coordinator, mprn=mprn, entry=entry),
+        ExportCreditHistorySensor(coordinator=coordinator, mprn=mprn, entry=entry),
         UsageTotalSensor(coordinator=coordinator, mprn=mprn, history=usage_history),
         ExportTotalSensor(coordinator=coordinator, mprn=mprn, history=export_history),
         # Diagnostic sensors
@@ -474,6 +480,67 @@ class ExportHistorySensor(BaseHistorySensor):
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
         """Get hourly export buckets."""
         return esb_data.hourly_export()
+
+
+class BaseCostHistorySensor(BaseHistorySensor):
+    """Euro amounts per hour, imported like the kWh History sensors.
+
+    History is re-costed in full whenever the tariff periods change.
+    """
+
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_icon = "mdi:currency-eur"
+    _statistics_unit = "EUR"
+    _series: str
+
+    def __init__(
+        self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, translation_key: str, entry: ESBConfigEntry
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key=translation_key)
+        self._entry = entry
+
+    def _import_state(self) -> ImportState:
+        return ImportState(self.hass, self._entry.entry_id, self._series)
+
+    async def _needs_full_import(self, hourly: list[tuple[Any, float]]) -> bool:
+        """Also re-cost everything after a tariff period was added, edited or removed."""
+        if await super()._needs_full_import(hourly):
+            return True
+        stored = await self._import_state().async_get_fingerprint()
+        return stored != fingerprint(tariff_periods(self._entry))
+
+    async def _async_full_import_done(self) -> None:
+        await self._import_state().async_set_fingerprint(fingerprint(tariff_periods(self._entry)))
+
+
+class UsageCostHistorySensor(BaseCostHistorySensor):
+    """Cost of grid import, including the standing charge."""
+
+    _series = "usage_cost"
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="usage_cost_history", entry=entry)
+        self._attr_unique_id = f"{mprn}_usage_cost_history"
+
+    def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return usage_costs(esb_data.hourly_usage(), tariff_periods(self._entry))
+
+
+class ExportCreditHistorySensor(BaseCostHistorySensor):
+    """Money earned for grid export."""
+
+    _series = "export_credit"
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="export_credit_history", entry=entry)
+        self._attr_unique_id = f"{mprn}_export_credit_history"
+
+    def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return export_credits(esb_data.hourly_export(), tariff_periods(self._entry))
 
 
 class BaseTotalSensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):

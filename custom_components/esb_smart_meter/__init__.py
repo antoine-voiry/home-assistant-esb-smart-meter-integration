@@ -9,6 +9,7 @@ from homeassistant.helpers import config_validation as cv
 from .api_client import ESBDataApi
 from .const import CONF_MPRN, CONF_PASSWORD, CONF_UPDATE_INTERVAL, CONF_USERNAME, DOMAIN
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator, ESBRuntimeData
+from .import_state import COST_SERIES, ImportState
 from .utils import create_esb_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,3 +87,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool
                 _LOGGER.warning("Error closing session: %s", err)
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> None:
+    """Delete the per-series import state when the integration is removed."""
+    for series in COST_SERIES:
+        await ImportState(hass, entry.entry_id, series).async_remove()
