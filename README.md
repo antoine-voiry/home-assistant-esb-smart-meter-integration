@@ -31,14 +31,14 @@ A comprehensive Home Assistant integration for monitoring your electricity usage
 ## ✨ Features
 
 - **📊 Twelve Time-Period Sensors**: Track usage and export for today, last 24 hours, this week, last 7 days, this month, and last 30 days
-- **📈 Two History Sensors**: Backfill long-term statistics at their real timestamps, so past usage and export appears for time delayed data (with companion Total sensors showing the running cumulative total), plus two cost history sensors for usage cost and export credit
+- **📈 Two History Sensors**: Backfill long-term statistics at their real timestamps, so past usage and export appears for time delayed data (with companion Total sensors showing the running cumulative total), plus Usage cost and Export credit totals backed by euro statistics
 - **🔄 Smart Caching**: Automatic data updates every 24 hours to minimize API calls and respect ESB's systems
 - **🔁 Robust Retry Logic**: 5 automatic retry attempts with 2-minute intervals on network failures
 - **⚡ Async Implementation**: Non-blocking async/await design using aiohttp for optimal Home Assistant performance
 - **🔐 Secure Authentication**: Handles ESB's complete 8-step OAuth2-like authentication flow
 - **🔑 Re-authentication**: If ESB rejects your password, Home Assistant asks for the new one instead of failing silently
 - **🩺 Diagnostics Download**: One-click diagnostics file for bug reports, with credentials and MPRN redacted
-- **💶 Cost Tracking**: Dated tariff periods (day / night / peak, standing charge, export rate) with SSE Airtricity and Bord Gáis presets; cost and export credit history for the Energy dashboard
+- **💶 Cost Tracking**: Dated tariff periods (day / night / peak, standing charge, export rate) with SSE Airtricity and Bord Gáis presets; euro cost and export credit statistics for the Energy dashboard
 - **🗂️ Full History**: Imports everything ESB provides (about 2 years) on first run, then only recent days
 - **📱 Device Grouping**: All sensors grouped under a single device in Home Assistant UI
 - **🆔 Unique Entity IDs**: Proper entity management with MPRN-based unique identifiers
@@ -150,7 +150,7 @@ The integration validates:
 
 ## 📊 Sensors
 
-After successful setup, you'll have **eighteen energy sensors** created under a single device — twelve rolling-window sensors, two backfilled hourly history sensors, two cost history sensors, and two cumulative totals:
+After successful setup, you'll have **eighteen energy sensors** created under a single device — twelve rolling-window sensors, two backfilled hourly history sensors, two cumulative kWh totals, and two euro totals:
 
 | Sensor Entity ID | Description | Time Period |
 |-----------------|-------------|-------------|
@@ -169,8 +169,8 @@ After successful setup, you'll have **eighteen energy sensors** created under a 
 | `sensor.esb_electricity_export_this_month` | Export since 1st of this month | 1st 00:00 → now |
 | `sensor.esb_electricity_export_last_30_days` | Rolling 30-day export | Last 30 days |
 | `sensor.esb_electricity_export_history` | Backfilled hourly export into long-term statistics | All time |
-| `sensor.esb_electricity_usage_cost_history` | Grid import cost (€, incl. standing charge) in long-term statistics | All time costed |
-| `sensor.esb_electricity_export_credit_history` | Export credit (€) in long-term statistics | All time costed |
+| `sensor.esb_electricity_usage_cost_total` | Running grid import cost (€, incl. standing charge) | All time costed |
+| `sensor.esb_electricity_export_credit_total` | Running export credit (€) | All time costed |
 | `sensor.esb_electricity_export_total` | Total historic export | All time |
 
 **All sensors report in kilowatt-hours (kWh)** with the `⚡` icon.
@@ -453,13 +453,14 @@ They appear under the **ESB Smart Meter** device in the statistic picker, as
 2. Click **Add grid connection**
 3. Set **Energy imported from grid** to **Usage history**
 4. If you export to the grid, set **Energy exported to grid** to **Export history**
-5. For costs, choose **Use an entity tracking the total costs** → **Usage cost history**,
-   and for export **Use an entity tracking the total received money** → **Export credit history**
+5. For costs, choose **Use an entity tracking the total costs** → **ESB Smart Meter (XXXXXXXXXXX) Usage cost**,
+   and for export **Use an entity tracking the total received money** → **ESB Smart Meter (XXXXXXXXXXX) Export credit**.
+   These are statistics, not entities, so they raise no warnings in the energy configuration.
 
 **Note**: Use the `*_history` sensors above (not the period `sensor.esb_electricity_usage_*`
 entities) for the Energy Dashboard — they carry the correct historic timestamps, so
 scrolling back to past dates shows real usage. Data appears 1-2 days after use because
-of ESB's publishing delay. The energy config page may show the History sensors, and the cost history sensors, as "Entity unavailable" — this is expected and harmless as they are intentionally stateless.
+of ESB's publishing delay. The energy config page may show the Usage and Export History sensors as "Entity unavailable" — this is expected and harmless as they are intentionally stateless.
 Costs are in euro, so set Home Assistant's currency to EUR (**Settings** → **System** → **General**).
 
 ### Upgrading from 1.3.x
@@ -473,7 +474,8 @@ The Last Update, API Status, Data Age and Circuit Breaker Status sensors move to
 device's **Diagnostic** section.
 
 The first refresh after upgrading backfills everything ESB provides (about 2 years) into
-the Usage and Export history statistics. After that, each refresh imports only the last 7 days.
+the Usage and Export history statistics, in the background so setup isn't held up. After that, each refresh
+imports only the last 7 days — or more after an outage, or when ESB fills in older hours that were missing.
 
 ### Upgrading to 1.3.8
 
