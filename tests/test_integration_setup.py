@@ -17,6 +17,7 @@ from custom_components.esb_smart_meter.const import CONF_MPRN, CONF_PASSWORD, CO
 from custom_components.esb_smart_meter.models import DUBLIN_TZ, ESBData
 
 MPRN = "12345678901"
+COST_ID = f"esb_smart_meter:usage_cost_{MPRN}"
 
 
 def _esb_data() -> ESBData:
@@ -56,7 +57,7 @@ def session():
 async def _setup(hass, entry, fetch):
     with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
         await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
 
 @pytest.mark.asyncio
@@ -138,19 +139,19 @@ async def test_backfill_cost_and_recost_after_tariff_change(recorder_mock, hass,
 
     with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
         await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         usage = await _sums(hass, "sensor.esb_electricity_usage_history")
-        cost = await _sums(hass, "sensor.esb_electricity_usage_cost_history")
+        cost = await _sums(hass, COST_ID)
         assert len(usage) == 240  # whole download backfilled
         assert usage[-1] == pytest.approx(240.0)  # 1 kWh per hour
         assert cost[-1] == pytest.approx(240 * 0.30)
 
         subentry = next(iter(entry.subentries.values()))
         hass.config_entries.async_update_subentry(entry, subentry, data={**TARIFF, "day_rate": 0.5, "night_rate": 0.5, "peak_rate": 0.5})
-        await hass.async_block_till_done()  # update listener re-imports from the data in memory
+        await hass.async_block_till_done(wait_background_tasks=True)  # update listener re-imports from the data in memory
 
-        cost = await _sums(hass, "sensor.esb_electricity_usage_cost_history")
+        cost = await _sums(hass, COST_ID)
         assert cost[-1] == pytest.approx(240 * 0.5)  # all history re-costed
         assert await _sums(hass, "sensor.esb_electricity_usage_history") == usage  # kWh untouched
         fetch.assert_awaited_once()  # no re-download on a tariff change
@@ -160,14 +161,14 @@ async def test_backfill_cost_and_recost_after_tariff_change(recorder_mock, hass,
 async def test_refresh_after_backfill_imports_recent_days(recorder_mock, hass, enable_custom_integrations, entry, session):
     with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", AsyncMock(return_value=_ten_days_of_usage())):
         await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
         await async_wait_recording_done(hass)
 
         with patch(
             "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
         ) as importer:
             await entry.runtime_data.coordinator.async_refresh()
-            await hass.async_block_till_done()
+            await hass.async_block_till_done(wait_background_tasks=True)
 
     usage_calls = [c for c in importer.call_args_list if c.args[1] == "sensor.esb_electricity_usage_history"]
     hours = usage_calls[-1].args[2]
@@ -180,13 +181,13 @@ async def test_refresh_after_long_outage_fills_the_gap(recorder_mock, hass, enab
     fetch = AsyncMock(return_value=_ten_days_of_usage(days_ago=11))
     with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
         await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
         await async_wait_recording_done(hass)
 
         # ESB returns the whole history, now ten days newer: more than the 7-day window
         fetch.return_value = _ten_days_of_usage(days_ago=1, days=20)
         await entry.runtime_data.coordinator.async_refresh()
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
     await async_wait_recording_done(hass)
     rows = await hass.async_add_executor_job(
@@ -226,20 +227,54 @@ async def test_moving_first_period_later_zeroes_costs_before_it(
     entry.add_to_hass(hass)
     with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", AsyncMock(return_value=_ten_days_of_usage())):
         await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
         usage = await _sums(hass, "sensor.esb_electricity_usage_history")
-        assert (await _sums(hass, "sensor.esb_electricity_usage_cost_history"))[-1] == pytest.approx(240 * 0.30)
+        assert (await _sums(hass, COST_ID))[-1] == pytest.approx(240 * 0.30)
 
         new_start = (datetime.now(DUBLIN_TZ) - timedelta(days=6)).date()
         subentry = next(iter(entry.subentries.values()))
         hass.config_entries.async_update_subentry(entry, subentry, data={**TARIFF, "effective_from": new_start.isoformat()})
-        await hass.async_block_till_done()
+        await hass.async_block_till_done(wait_background_tasks=True)
 
         cutoff = datetime.combine(new_start, time(), DUBLIN_TZ).timestamp()
-        cost = await _rows(hass, "sensor.esb_electricity_usage_cost_history")
+        cost = await _rows(hass, COST_ID)
         before = [row["sum"] for row in cost if row["start"] < cutoff]
         after = [row for row in cost if row["start"] >= cutoff]
         assert len(before) + len(after) == 240
         assert before and all(total == pytest.approx(0.0) for total in before)  # baseline: nothing costed
         assert cost[-1]["sum"] == pytest.approx(len(after) * 0.30)
         assert await _sums(hass, "sensor.esb_electricity_usage_history") == usage  # kWh unchanged
+
+
+@pytest.mark.asyncio
+async def test_gap_filled_in_late_by_esb_is_imported(recorder_mock, hass, enable_custom_integrations, entry, session):
+    """ESB filling in hours older than the recent window (meter back online) must reach the statistics."""
+    complete = _ten_days_of_usage()
+    hours = complete.hourly_usage()
+    gap = {hour for hour, _ in hours[48:96]}  # two days, more than 7 days before the newest hour
+    with_gap = ESBData(
+        data=[
+            {
+                "Read Date and End Time": (end.astimezone(DUBLIN_TZ)).strftime("%d-%m-%Y %H:%M"),
+                "Read Value": "0.5",
+                "Read Type": "Active Import Interval (kWh)",
+            }
+            for start, _kwh in hours
+            if start not in gap
+            for end in (start + timedelta(minutes=30), start + timedelta(hours=1))
+        ]
+    )
+    assert len(with_gap.hourly_usage()) == len(hours) - 48
+    fetch = AsyncMock(return_value=with_gap)
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        await async_wait_recording_done(hass)
+
+        fetch.return_value = complete
+        await entry.runtime_data.coordinator.async_refresh()
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    rows = await _rows(hass, "sensor.esb_electricity_usage_history")
+    assert len(rows) == len(hours)
+    assert rows[-1]["sum"] == pytest.approx(sum(kwh for _, kwh in hours))

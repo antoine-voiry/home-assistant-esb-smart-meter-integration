@@ -12,14 +12,15 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 
 from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.statistics import (
-    async_has_statistic_at,
     async_import_hourly_statistics,
-    async_last_statistic_start,
+    async_stored_hours,
+    async_wait_committed,
     recent_hours,
 )
 
 IMPORT = "Active Import Interval (kWh)"
 USAGE_ID = "sensor.esb_electricity_usage_history"
+EXTERNAL_ID = "esb_smart_meter:usage_cost_12345678901"
 
 
 def _row(dt, value, read_type):
@@ -120,13 +121,18 @@ async def test_metadata_declares_energy_unit_class(hourly_usage):
 
 
 @pytest.mark.asyncio
-async def test_has_statistic_at(recorder_mock, hass, hourly_usage):
+async def test_stored_hours(recorder_mock, hass, hourly_usage):
+    """Return the hour starts stored for a series within [start, end)."""
+    first, last = hourly_usage[0][0], hourly_usage[-1][0]
+    assert await async_stored_hours(hass, USAGE_ID, first, last + timedelta(hours=1)) == set()
+
     await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
     await async_wait_recording_done(hass)
 
-    first_hour = hourly_usage[0][0]
-    assert await async_has_statistic_at(hass, USAGE_ID, first_hour) is True
-    assert await async_has_statistic_at(hass, USAGE_ID, first_hour - timedelta(hours=5)) is False
+    assert await async_stored_hours(hass, USAGE_ID, first - timedelta(hours=5), last + timedelta(hours=1)) == {
+        hour for hour, _ in hourly_usage
+    }
+    assert await async_stored_hours(hass, USAGE_ID, last, last + timedelta(hours=1)) == {last}
 
 
 @pytest.mark.asyncio
@@ -178,10 +184,63 @@ def test_recent_hours_keeps_window_when_resume_is_newer():
 
 
 @pytest.mark.asyncio
-async def test_last_statistic_start(recorder_mock, hass, hourly_usage):
-    assert await async_last_statistic_start(hass, USAGE_ID) is None
+async def test_external_statistic_metadata(hourly_usage):
+    """A domain:object_id statistic is added as an external statistic named for the picker."""
+    hass = MagicMock()
+    with patch("custom_components.esb_smart_meter.statistics.get_instance") as get_instance, patch(
+        "custom_components.esb_smart_meter.statistics.async_add_external_statistics"
+    ) as add_external, patch("custom_components.esb_smart_meter.statistics.async_import_statistics") as add:
+        get_instance.return_value.async_add_executor_job = AsyncMock(return_value={})
+        await async_import_hourly_statistics(
+            hass, EXTERNAL_ID, hourly_usage, unit="EUR", name="ESB Smart Meter (12345678901) Usage cost"
+        )
 
-    await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
+    add.assert_not_called()
+    _hass, metadata, stats = add_external.call_args.args
+    assert metadata["statistic_id"] == EXTERNAL_ID
+    assert metadata["source"] == "esb_smart_meter"
+    assert metadata["name"] == "ESB Smart Meter (12345678901) Usage cost"
+    assert metadata["unit_of_measurement"] == "EUR"
+    assert metadata["unit_class"] is None
+    assert [s["sum"] for s in stats] == pytest.approx([0.3, 0.7])
+
+
+@pytest.mark.asyncio
+async def test_external_statistics_round_trip(recorder_mock, hass, hourly_usage):
+    """External rows are stored, read back and used as the baseline like entity rows."""
+    await async_import_hourly_statistics(hass, EXTERNAL_ID, hourly_usage, unit="EUR", name="cost")
+    await async_wait_recording_done(hass)
+    later = [(hour + timedelta(hours=2), value) for hour, value in hourly_usage]
+    total = await async_import_hourly_statistics(hass, EXTERNAL_ID, later[-1:], unit="EUR", name="cost")
     await async_wait_recording_done(hass)
 
-    assert await async_last_statistic_start(hass, USAGE_ID) == hourly_usage[-1][0]
+    start = hourly_usage[0][0]
+    stored = await async_stored_hours(hass, EXTERNAL_ID, start, start + timedelta(hours=10))
+    assert stored == {hour for hour, _ in hourly_usage} | {later[-1][0]}
+    assert total == pytest.approx(0.7 + 0.4)  # baseline from the stored external rows
+
+
+@pytest.mark.asyncio
+async def test_wait_committed_returns_once_import_is_readable(recorder_mock, hass, hourly_usage):
+    """After the wait, the next import's baseline query sees the rows queued before it."""
+    total = await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
+
+    assert await async_wait_committed(hass, USAGE_ID, hourly_usage[-1][0], total) is True
+
+    first, last = hourly_usage[0][0], hourly_usage[-1][0]
+    assert await async_stored_hours(hass, USAGE_ID, first, last + timedelta(hours=1)) == {h for h, _ in hourly_usage}
+
+
+@pytest.mark.asyncio
+async def test_wait_committed_gives_up_and_warns(hourly_usage, caplog):
+    """A recorder that never shows the row must not hang the import forever."""
+    hass = MagicMock()
+    with patch("custom_components.esb_smart_meter.statistics.get_instance") as get_instance:
+        get_instance.return_value.async_add_executor_job = AsyncMock(
+            return_value={USAGE_ID: [{"start": 0.0, "sum": 1.0}]}  # an older sum, not the imported one
+        )
+        committed = await async_wait_committed(hass, USAGE_ID, hourly_usage[-1][0], 0.7, attempts=3)
+
+    assert committed is False
+    assert get_instance.return_value.async_add_executor_job.await_count == 3
+    assert "not readable" in caplog.text
