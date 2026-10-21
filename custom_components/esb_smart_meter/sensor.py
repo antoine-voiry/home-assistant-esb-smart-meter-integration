@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, MANUFACTURER, MODEL
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator
 from .import_state import ImportState
+from .migration import async_migrate_legacy_history
 from .models import ESBData
 from .statistics import (
     async_import_hourly_statistics,
@@ -29,10 +30,10 @@ from .tariff import export_credits, fingerprint, tariff_periods, usage_costs
 # documented ids, Energy dashboard statistics and user templates stay the same.
 _LEGACY_OBJECT_IDS = {
     **{f"usage_{period}": f"esb_electricity_usage_{period}" for period in (
-        "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days", "history", "total",
+        "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days", "total",
     )},
     **{f"export_{period}": f"esb_electricity_export_{period}" for period in (
-        "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days", "history", "total",
+        "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days", "total",
     )},
     "usage_cost_total": "esb_electricity_usage_cost_total",
     "export_credit_total": "esb_electricity_export_credit_total",
@@ -64,11 +65,6 @@ async def async_setup_entry(
     coordinator = entry.runtime_data.coordinator
     mprn = coordinator.mprn
 
-    # History sensors carry the long-term statistics; the Total sensors mirror
-    # their running total for display on the device page.
-    usage_history = UsageHistorySensor(coordinator=coordinator, mprn=mprn)
-    export_history = ExportHistorySensor(coordinator=coordinator, mprn=mprn)
-
     # Create all sensors using the coordinator
     sensors = [
         TodaySensor(coordinator=coordinator, mprn=mprn),
@@ -83,13 +79,11 @@ async def async_setup_entry(
         ExportLast7DaysSensor(coordinator=coordinator, mprn=mprn),
         ExportThisMonthSensor(coordinator=coordinator, mprn=mprn),
         ExportLast30DaysSensor(coordinator=coordinator, mprn=mprn),
-        # History (imported statistics) and their display totals
-        usage_history,
-        export_history,
+        # Totals backed by the imported (external) statistics
+        UsageTotalSensor(coordinator=coordinator, mprn=mprn),
+        ExportTotalSensor(coordinator=coordinator, mprn=mprn),
         UsageCostSensor(coordinator=coordinator, mprn=mprn, entry=entry),
         ExportCreditSensor(coordinator=coordinator, mprn=mprn, entry=entry),
-        UsageTotalSensor(coordinator=coordinator, mprn=mprn, history=usage_history),
-        ExportTotalSensor(coordinator=coordinator, mprn=mprn, history=export_history),
         # Diagnostic sensors
         LastUpdateSensor(coordinator=coordinator, mprn=mprn),
         ApiStatusSensor(coordinator=coordinator, mprn=mprn),
@@ -382,11 +376,12 @@ class ExportLast30DaysSensor(BaseSensor):
 
 
 class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):
-    """Backfills hourly history into long-term statistics.
+    """Imports an hourly series into an external statistic and shows its running total.
 
-    Imports hourly history against its own statistic id so the statistics stay
-    grouped under the device. The entity is stateless (see native_value); the
-    paired Total sensor mirrors the running cumulative total for display.
+    The statistic (``esb_smart_meter:<series>_<mprn>``) has no entity behind it, so
+    the Energy dashboard raises no entity warnings for it. The entity itself only
+    displays the running total; it has no state_class, so the recorder never
+    auto-compiles a second, competing series from it.
     """
 
     _attr_has_entity_name = True
@@ -394,41 +389,38 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_icon = "mdi:flash"
     _statistics_unit: str = UnitOfEnergy.KILO_WATT_HOUR
-    _statistic_name: str | None = None
+    _series: str
+    _label: str
+    # unique_id suffix of the entity-based History sensor this series replaced, if any
+    _legacy_suffix: str | None = None
 
     def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, translation_key: str) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._mprn = mprn
         self._attr_translation_key = translation_key
+        self._attr_unique_id = f"{mprn}_{translation_key}"
         self.entity_id = _legacy_entity_id(translation_key)
         self._attr_device_info = _device_info(mprn)
+        self._statistic_name = f"ESB Smart Meter ({mprn}) {self._label}"
         self._cumulative: float | None = None
-        self._total_sensor: "BaseTotalSensor | None" = None
+        self._migrated = self._legacy_suffix is None
         # Imports of one series run one at a time, each reading the sums the previous one committed
         self._import_lock = asyncio.Lock()
 
-    def register_total(self, total: "BaseTotalSensor") -> None:
-        """Link the display Total sensor so it can be refreshed after imports."""
-        self._total_sensor = total
-
     @property
     def _statistic_id(self) -> str:
-        """Return where this series' statistics are stored: the entity's own id by default."""
-        return self.entity_id
+        """Return the external statistic this series is imported into."""
+        return f"{DOMAIN}:{self._series}_{self._mprn}"
 
     @abstractmethod
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
-        """Return the hourly (hour_start, kWh) buckets for this series."""
+        """Return the hourly (hour_start, value) buckets for this series."""
 
     @property
     def native_value(self) -> float | None:
-        """Return no state; the data lives in the imported statistics.
-
-        A state_class would make the recorder auto-compile a second, conflicting
-        statistics series from the live state, so this stays stateless.
-        """
-        return None
+        """Return the running total of the imported statistics (display only)."""
+        return self._cumulative
 
     async def async_added_to_hass(self) -> None:
         """Import statistics once the entity (and its id) exists."""
@@ -454,6 +446,16 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
         subclass asks for it; otherwise only recent days, anchored to the stored sum.
         """
         async with self._import_lock:
+            if not self._migrated:
+                # Before anything new lands in the external statistic, bring over the old History rows
+                await async_migrate_legacy_history(
+                    self.hass,
+                    f"{self._mprn}_{self._legacy_suffix}",
+                    self._statistic_id,
+                    unit=self._statistics_unit,
+                    name=self._statistic_name,
+                )
+                self._migrated = True
             if self.coordinator.data is None:
                 return
             hourly = self._hourly(esb_data=self.coordinator.data)
@@ -483,7 +485,8 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
             if full and committed:
                 await self._async_full_import_done(hourly)
             if total is not None:
-                self._publish_total(total)
+                self._cumulative = total
+                self.async_write_ha_state()
 
     async def _needs_full_import(self, hourly: list[tuple[Any, float]], stored: set[Any]) -> bool:
         """Backfill when a downloaded hour up to the newest stored one is missing.
@@ -504,33 +507,33 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
     async def _async_full_import_done(self, hourly: list[tuple[Any, float]]) -> None:
         """Run after a full import is readable; series that track their inputs override this."""
 
-    def _publish_total(self, total: float) -> None:
-        """Show the new running total on the paired Total sensor."""
-        self._cumulative = total
-        if self._total_sensor is not None:
-            self._total_sensor.async_write_total()
 
+class UsageTotalSensor(BaseHistorySensor):
+    """Grid import: hourly history as statistics, running kWh total as state."""
 
-class UsageHistorySensor(BaseHistorySensor):
-    """Consumption history backfilled into long-term statistics."""
+    _series = "usage"
+    _label = "Usage"
+    _legacy_suffix = "usage_history"
 
     def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="usage_history")
-        self._attr_unique_id = f"{mprn}_usage_history"
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="usage_total")
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
         """Get hourly usage buckets."""
         return esb_data.hourly_usage()
 
 
-class ExportHistorySensor(BaseHistorySensor):
-    """Grid export history backfilled into long-term statistics."""
+class ExportTotalSensor(BaseHistorySensor):
+    """Grid export: hourly history as statistics, running kWh total as state."""
+
+    _series = "export"
+    _label = "Export"
+    _legacy_suffix = "export_history"
 
     def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="export_history")
-        self._attr_unique_id = f"{mprn}_export_history"
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="export_total")
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
         """Get hourly export buckets."""
@@ -538,19 +541,15 @@ class ExportHistorySensor(BaseHistorySensor):
 
 
 class BaseCostSensor(BaseHistorySensor):
-    """Euro amounts per hour as external statistics, with the running total as state.
+    """Euro amounts per hour, costed from the tariff periods.
 
-    External statistics (``esb_smart_meter:<series>_<mprn>``) have no entity, so the
-    Energy dashboard raises no entity warnings for them. History is re-costed in
-    full whenever the tariff periods change.
+    History is re-costed in full whenever the tariff periods change.
     """
 
     _attr_native_unit_of_measurement = "EUR"
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_icon = "mdi:currency-eur"
     _statistics_unit = "EUR"
-    _series: str
-    _label: str
 
     def __init__(
         self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, translation_key: str, entry: ESBConfigEntry
@@ -558,21 +557,6 @@ class BaseCostSensor(BaseHistorySensor):
         """Initialize the sensor."""
         super().__init__(coordinator=coordinator, mprn=mprn, translation_key=translation_key)
         self._entry = entry
-        self._attr_unique_id = f"{mprn}_{translation_key}"
-        self._statistic_name = f"ESB Smart Meter ({mprn}) {self._label}"
-
-    @property
-    def _statistic_id(self) -> str:
-        return f"{DOMAIN}:{self._series}_{self._mprn}"
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the running euro total of the imported statistics (display only)."""
-        return self._cumulative
-
-    def _publish_total(self, total: float) -> None:
-        self._cumulative = total
-        self.async_write_ha_state()
 
     def _import_state(self) -> ImportState:
         return ImportState(self.hass, self._entry.entry_id, self._series)
@@ -644,73 +628,6 @@ class ExportCreditSensor(BaseCostSensor):
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
         return export_credits(self._downloaded(esb_data=esb_data), tariff_periods(self._entry))
-
-
-class BaseTotalSensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntity):
-    """Display-only cumulative total mirroring its paired History sensor.
-
-    Has no state_class, so the recorder never auto-compiles statistics for it;
-    the History sensor carries the long-term statistics. This entity just shows
-    the running total on the device page.
-    """
-
-    _attr_has_entity_name = True
-    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_icon = "mdi:flash"
-
-    def __init__(
-        self,
-        *,
-        coordinator: ESBDataUpdateCoordinator,
-        mprn: str,
-        translation_key: str,
-        history: BaseHistorySensor,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._mprn = mprn
-        self._attr_translation_key = translation_key
-        self.entity_id = _legacy_entity_id(translation_key)
-        self._attr_device_info = _device_info(mprn)
-        self._history = history
-        history.register_total(self)
-
-    @property
-    def native_value(self) -> float | None:
-        """Return the running cumulative total from the paired History sensor."""
-        return self._history._cumulative
-
-    def async_write_total(self) -> None:
-        """Write the latest total to the state machine (called by the History sensor)."""
-        if self.hass is not None:
-            self.async_write_ha_state()
-
-
-class UsageTotalSensor(BaseTotalSensor):
-    """Cumulative consumption total (display)."""
-
-    def __init__(
-        self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, history: BaseHistorySensor
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            coordinator=coordinator, mprn=mprn, translation_key="usage_total", history=history
-        )
-        self._attr_unique_id = f"{mprn}_usage_total"
-
-
-class ExportTotalSensor(BaseTotalSensor):
-    """Cumulative grid export total (display)."""
-
-    def __init__(
-        self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, history: BaseHistorySensor
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            coordinator=coordinator, mprn=mprn, translation_key="export_total", history=history
-        )
-        self._attr_unique_id = f"{mprn}_export_total"
 
 
 class LastUpdateSensor(SensorEntity):

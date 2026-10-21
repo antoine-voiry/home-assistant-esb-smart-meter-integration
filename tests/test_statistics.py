@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 
 from custom_components.esb_smart_meter.models import ESBData
 from custom_components.esb_smart_meter.statistics import (
+    async_copy_statistics,
     async_import_hourly_statistics,
     async_stored_hours,
     async_wait_committed,
@@ -244,3 +245,35 @@ async def test_wait_committed_gives_up_and_warns(hourly_usage, caplog):
     assert committed is False
     assert get_instance.return_value.async_add_executor_job.await_count == 3
     assert "not readable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_copy_statistics_moves_full_history_to_external(recorder_mock, hass, hourly_usage):
+    """Every stored row, including ones older than any download, is copied with its sums."""
+    await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
+    await async_wait_recording_done(hass)
+
+    copied = await async_copy_statistics(hass, USAGE_ID, EXTERNAL_ID, unit="kWh", name="Usage")
+
+    assert copied == len(hourly_usage)
+    first, last = hourly_usage[0][0], hourly_usage[-1][0]
+    assert await async_stored_hours(hass, EXTERNAL_ID, first, last + timedelta(hours=1)) == {h for h, _ in hourly_usage}
+    rows = await hass.async_add_executor_job(
+        statistics_during_period, hass, first, None, {EXTERNAL_ID}, "hour", None, {"state", "sum"}
+    )
+    assert [row["sum"] for row in rows[EXTERNAL_ID]] == pytest.approx([0.3, 0.7])
+    # The source is untouched; deleting it is left to the user
+    assert await async_stored_hours(hass, USAGE_ID, first, last + timedelta(hours=1)) == {h for h, _ in hourly_usage}
+
+
+@pytest.mark.asyncio
+async def test_copy_statistics_without_source_rows_copies_nothing(recorder_mock, hass):
+    assert await async_copy_statistics(hass, USAGE_ID, EXTERNAL_ID, unit="kWh", name="Usage") == 0
+
+
+@pytest.mark.asyncio
+async def test_copy_statistics_reports_unreadable_copy(recorder_mock, hass, hourly_usage):
+    await async_import_hourly_statistics(hass, USAGE_ID, hourly_usage)
+    await async_wait_recording_done(hass)
+    with patch("custom_components.esb_smart_meter.statistics.async_wait_committed", AsyncMock(return_value=False)):
+        assert await async_copy_statistics(hass, USAGE_ID, EXTERNAL_ID, unit="kWh", name="Usage") is None

@@ -18,6 +18,8 @@ from custom_components.esb_smart_meter.tariff import TariffPeriod
 from custom_components.esb_smart_meter.tariff_flow import PRESETS
 
 MPRN = "12345678901"
+USAGE = f"esb_smart_meter:usage_{MPRN}"
+EXPORT = f"esb_smart_meter:export_{MPRN}"
 USAGE_COST = f"esb_smart_meter:usage_cost_{MPRN}"
 EXPORT_CREDIT = f"esb_smart_meter:export_credit_{MPRN}"
 
@@ -59,8 +61,8 @@ async def configured(recorder_mock, hass, enable_custom_integrations):
             "energy_sources": [
                 {
                     "type": "grid",
-                    "stat_energy_from": "sensor.esb_electricity_usage_history",
-                    "stat_energy_to": "sensor.esb_electricity_export_history",
+                    "stat_energy_from": USAGE,
+                    "stat_energy_to": EXPORT,
                     "stat_cost": USAGE_COST,
                     "entity_energy_price": None,
                     "number_energy_price": None,
@@ -85,14 +87,12 @@ def _flagged(validation) -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_energy_dashboard_accepts_cost_statistics(configured):
-    """External cost statistics raise no Energy dashboard issues."""
-    flagged = _flagged(await async_validate(configured))
+async def test_energy_dashboard_reports_no_issues(configured):
+    """Usage, export, cost and credit are external statistics: nothing for the validator to flag."""
+    validation = await async_validate(configured)
 
-    assert USAGE_COST not in flagged
-    assert EXPORT_CREDIT not in flagged
-    # The kWh History series are still entity-based (stateless entities); migrating them is a separate change
-    assert flagged <= {"sensor.esb_electricity_usage_history", "sensor.esb_electricity_export_history"}
+    assert _flagged(validation) == set()
+    assert validation.as_dict()["energy_sources"] == [[]]
 
 
 @pytest.mark.asyncio

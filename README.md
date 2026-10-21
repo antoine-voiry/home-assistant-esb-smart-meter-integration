@@ -31,7 +31,7 @@ A comprehensive Home Assistant integration for monitoring your electricity usage
 ## ✨ Features
 
 - **📊 Twelve Time-Period Sensors**: Track usage and export for today, last 24 hours, this week, last 7 days, this month, and last 30 days
-- **📈 Two History Sensors**: Backfill long-term statistics at their real timestamps, so past usage and export appears for time delayed data (with companion Total sensors showing the running cumulative total), plus Usage cost and Export credit totals backed by euro statistics
+- **📈 Hourly History**: Usage and export are imported into long-term statistics at their real timestamps, so past usage appears despite ESB's delay; Usage total and Export total sensors show the running totals, alongside Usage cost and Export credit totals in euro
 - **🔄 Smart Caching**: Automatic data updates every 24 hours to minimize API calls and respect ESB's systems
 - **🔁 Robust Retry Logic**: 5 automatic retry attempts with 2-minute intervals on network failures
 - **⚡ Async Implementation**: Non-blocking async/await design using aiohttp for optimal Home Assistant performance
@@ -150,7 +150,7 @@ The integration validates:
 
 ## 📊 Sensors
 
-After successful setup, you'll have **eighteen energy sensors** created under a single device — twelve rolling-window sensors, two backfilled hourly history sensors, two cumulative kWh totals, and two euro totals:
+After successful setup, you'll have **sixteen energy sensors** created under a single device — twelve rolling-window sensors, two cumulative kWh totals, and two euro totals. The totals also import the hourly history into long-term statistics:
 
 | Sensor Entity ID | Description | Time Period |
 |-----------------|-------------|-------------|
@@ -160,7 +160,6 @@ After successful setup, you'll have **eighteen energy sensors** created under a 
 | `sensor.esb_electricity_usage_last_7_days` | Rolling 7-day usage | Last 7 days |
 | `sensor.esb_electricity_usage_this_month` | Usage since 1st of this month | 1st 00:00 → now |
 | `sensor.esb_electricity_usage_last_30_days` | Rolling 30-day usage | Last 30 days |
-| `sensor.esb_electricity_usage_history` | Backfilled hourly usage into long-term statistics | All time |
 | `sensor.esb_electricity_usage_total` | Total historic usage | All time |
 | `sensor.esb_electricity_export_today` | Export since midnight today | 00:00 today → now |
 | `sensor.esb_electricity_export_last_24_hours` | Rolling 24-hour export | Last 24 hours |
@@ -168,7 +167,6 @@ After successful setup, you'll have **eighteen energy sensors** created under a 
 | `sensor.esb_electricity_export_last_7_days` | Rolling 7-day export | Last 7 days |
 | `sensor.esb_electricity_export_this_month` | Export since 1st of this month | 1st 00:00 → now |
 | `sensor.esb_electricity_export_last_30_days` | Rolling 30-day export | Last 30 days |
-| `sensor.esb_electricity_export_history` | Backfilled hourly export into long-term statistics | All time |
 | `sensor.esb_electricity_usage_cost_total` | Running grid import cost (€, incl. standing charge) | All time costed |
 | `sensor.esb_electricity_export_credit_total` | Running export credit (€) | All time costed |
 | `sensor.esb_electricity_export_total` | Total historic export | All time |
@@ -440,52 +438,56 @@ Export credit = exported kWh × export rate.
 
 The integration imports your readings into Home Assistant's long-term statistics
 (hourly, at their real timestamps), so the Energy Dashboard shows accurate history
-despite ESB's 1-2 day delay. These are carried by two **History** sensors grouped
-under the device:
+despite ESB's 1-2 day delay. There are four statistics per meter, listed in the
+statistic pickers by name:
 
-- **Usage history** (`sensor.esb_electricity_usage_history`) — consumption
-- **Export history** (`sensor.esb_electricity_export_history`) — export to grid
-
-They appear under the **ESB Smart Meter** device in the statistic picker, as
-**ESB Smart Meter (XXXXXXXXXXX) Usage history** and **… Export history**.
+- **ESB Smart Meter (XXXXXXXXXXX) Usage** — energy imported from the grid (kWh)
+- **ESB Smart Meter (XXXXXXXXXXX) Export** — energy exported to the grid (kWh)
+- **ESB Smart Meter (XXXXXXXXXXX) Usage cost** — what the import cost (€, incl. standing charge)
+- **ESB Smart Meter (XXXXXXXXXXX) Export credit** — what the export earned (€)
 
 1. Go to **Settings** → **Dashboards** → **Energy** → **Edit Dashboard**
 2. Click **Add grid connection**
-3. Set **Energy imported from grid** to **Usage history**
-4. If you export to the grid, set **Energy exported to grid** to **Export history**
+3. Set **Energy imported from grid** to **ESB Smart Meter (XXXXXXXXXXX) Usage**
+4. If you export to the grid, set **Energy exported to grid** to **ESB Smart Meter (XXXXXXXXXXX) Export**
 5. For costs, choose **Use an entity tracking the total costs** → **ESB Smart Meter (XXXXXXXXXXX) Usage cost**,
-   and for export **Use an entity tracking the total received money** → **ESB Smart Meter (XXXXXXXXXXX) Export credit**.
-   These are statistics, not entities, so they raise no warnings in the energy configuration.
+   and for export **Use an entity tracking the total received money** → **ESB Smart Meter (XXXXXXXXXXX) Export credit**
 
-**Note**: Use the `*_history` sensors above (not the period `sensor.esb_electricity_usage_*`
-entities) for the Energy Dashboard — they carry the correct historic timestamps, so
-scrolling back to past dates shows real usage. Data appears 1-2 days after use because
-of ESB's publishing delay. The energy config page may show the Usage and Export History sensors as "Entity unavailable" — this is expected and harmless as they are intentionally stateless.
-Costs are in euro, so set Home Assistant's currency to EUR (**Settings** → **System** → **General**).
+These are statistics, not entities, so the energy configuration shows no warnings for them.
+Don't use the period sensors (`sensor.esb_electricity_usage_today` and so on): they cover
+moving windows, not real timestamps. Data appears 1-2 days after use because of ESB's
+publishing delay. Costs are in euro, so set Home Assistant's currency to EUR
+(**Settings** → **System** → **General**).
 
 ### Upgrading from 1.3.x
 
 Sensor display names are now translated and shown under the device name: for example
 **ESB Electricity Usage: Today** becomes **ESB Smart Meter (XXXXXXXXXXX) Usage today**.
-**Entity IDs do not change**, so automations, templates and Energy dashboard
-statistics keep working. Names you set yourself in the UI are kept.
+**Entity IDs do not change**, so automations and templates keep working. Names you set
+yourself in the UI are kept.
 
 The Last Update, API Status, Data Age and Circuit Breaker Status sensors move to the
 device's **Diagnostic** section.
 
-The first refresh after upgrading backfills everything ESB provides (about 2 years) into
-the Usage and Export history statistics, in the background so setup isn't held up. After that, each refresh
-imports only the last 7 days — or more after an outage, or when ESB fills in older hours that were missing.
+The **Usage history** and **Export history** sensors are replaced by the statistics above.
+On the first start after upgrading, the integration copies all their history (including
+anything older than ESB's ~2-year window) into the new statistics, switches your Energy
+dashboard to them, and removes the two old sensors. The old statistics are left in place:
+once you're happy, delete them from **Developer tools** → **Statistics**.
+
+That first start also backfills everything ESB provides (about 2 years), in the background
+so setup isn't held up. After that, each refresh imports only the last 7 days — or more
+after an outage, or when ESB fills in older hours that were missing.
 
 ### Upgrading to 1.3.8
 
 The period sensors (Today, Last 7 Days, This Month, …) no longer have a `state_class`.
 They were producing negative long-term statistics because their windows move.
-Use the **History** sensors for the Energy dashboard.
+Use the statistics described in [Energy Dashboard Integration](#energy-dashboard-integration).
 
 After upgrading, Home Assistant lists the old period statistics under
 **Developer tools → Statistics** as "no longer has a state class". Click **Fix issue → Delete**
-for each one. Your History statistics are not affected.
+for each one. Your imported history is not affected.
 
 ### Automation Examples
 

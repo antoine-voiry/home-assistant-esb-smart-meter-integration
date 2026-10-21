@@ -113,12 +113,6 @@
       "export_last_30_days": {
         "name": "Export last 30 days"
       },
-      "usage_history": {
-        "name": "Usage history"
-      },
-      "export_history": {
-        "name": "Export history"
-      },
       "usage_cost_total": {
         "name": "Usage cost total"
       },

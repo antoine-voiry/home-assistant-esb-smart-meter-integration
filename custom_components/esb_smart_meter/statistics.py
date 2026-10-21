@@ -60,23 +60,27 @@ async def async_import_hourly_statistics(
         running_sum += kwh
         stats.append(StatisticData(start=start, state=running_sum, sum=running_sum))
 
-    external = ":" in statistic_id
-    metadata = StatisticMetaData(
-        mean_type=StatisticMeanType.NONE,
-        has_sum=True,
-        name=name,
-        source=statistic_id.split(":", 1)[0] if external else RECORDER_SOURCE,
-        statistic_id=statistic_id,
-        unit_of_measurement=unit,
-        # Energy needs its unit class (HA 2026.11); currencies have no converter
-        unit_class=EnergyConverter.UNIT_CLASS if unit == UnitOfEnergy.KILO_WATT_HOUR else None,
-    )
-    if external:
+    metadata = _metadata(statistic_id, unit, name)
+    if ":" in statistic_id:
         async_add_external_statistics(hass, metadata, stats)
     else:
         async_import_statistics(hass, metadata, stats)
     _LOGGER.debug("Imported %d statistics rows to %s (total %.3f)", len(stats), statistic_id, running_sum)
     return running_sum
+
+
+def _metadata(statistic_id: str, unit: str, name: str | None) -> StatisticMetaData:
+    """Return sum-statistic metadata; a `domain:object_id` id is external, sourced from its domain."""
+    return StatisticMetaData(
+        mean_type=StatisticMeanType.NONE,
+        has_sum=True,
+        name=name,
+        source=statistic_id.split(":", 1)[0] if ":" in statistic_id else RECORDER_SOURCE,
+        statistic_id=statistic_id,
+        unit_of_measurement=unit,
+        # Energy needs its unit class (HA 2026.11); currencies have no converter
+        unit_class=EnergyConverter.UNIT_CLASS if unit == UnitOfEnergy.KILO_WATT_HOUR else None,
+    )
 
 
 async def _baseline(hass: HomeAssistant, statistic_id: str, window_start: datetime) -> float:
@@ -95,6 +99,42 @@ async def _baseline(hass: HomeAssistant, statistic_id: str, window_start: dateti
     if series:
         return float(series[-1].get("sum") or 0.0)
     return 0.0
+
+
+async def async_copy_statistics(
+    hass: HomeAssistant, old_statistic_id: str, new_statistic_id: str, *, unit: str, name: str | None
+) -> int | None:
+    """Copy every hourly row (state and sum) to another statistic and wait until readable.
+
+    Used to move entity-based history to an external statistic without losing rows
+    older than ESB's download window. Returns the number of rows copied (0 when
+    there was nothing to copy), or None if the copy never became readable. The
+    source rows are left in place.
+    """
+    rows = await get_instance(hass).async_add_executor_job(
+        statistics_during_period,
+        hass,
+        datetime.fromtimestamp(0, timezone.utc),
+        None,
+        {old_statistic_id},
+        "hour",
+        None,
+        {"state", "sum"},
+    )
+    series = rows.get(old_statistic_id)
+    if not series:
+        return 0
+    stats = [
+        StatisticData(
+            start=datetime.fromtimestamp(row["start"], timezone.utc), state=row.get("state"), sum=row.get("sum")
+        )
+        for row in series
+    ]
+    async_add_external_statistics(hass, _metadata(new_statistic_id, unit, name), stats)
+    _LOGGER.info("Copying %d statistics rows from %s to %s", len(stats), old_statistic_id, new_statistic_id)
+    if not await async_wait_committed(hass, new_statistic_id, stats[-1]["start"], stats[-1]["sum"] or 0.0):
+        return None
+    return len(stats)
 
 
 async def async_stored_hours(
