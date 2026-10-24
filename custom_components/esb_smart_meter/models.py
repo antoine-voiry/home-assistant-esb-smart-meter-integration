@@ -247,14 +247,14 @@ class ESBData:
 
     @staticmethod
     def _hourly(series: list[tuple[datetime, float]]) -> list[tuple[datetime, float]]:
-        """Aggregate 30-minute readings into complete hourly buckets, ascending.
+        """Aggregate 30-minute readings into hourly buckets, ascending.
 
-        A bucket is admitted only once both of its interval-end readings are
-        present. The rolling 90-day cutoff lands inside an hour, so the leading
-        bucket can hold a single half hour; importing it would replace a
-        previously complete stored hour with a lower sum and shift the whole
-        later cumulative suffix. Incomplete buckets (leading, trailing or a gap)
-        are omitted rather than imported as partial or zero energy.
+        The first and last buckets are kept only once both of their interval-end
+        readings are present: the download (or rolling cutoff) starts and ends
+        mid-hour, and a lone half there would replace a complete stored hour with
+        a lower sum, or publish a trailing half as a full hour. A bucket inside the
+        series keeps what ESB sent: its gaps are permanent, so the missing half
+        never arrives and waiting would hold back every later hour.
         """
         buckets: dict[datetime, float] = defaultdict(float)
         ends: dict[datetime, set[datetime]] = defaultdict(set)
@@ -263,11 +263,16 @@ class ESBData:
             hour_start = (timestamp - timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
             buckets[hour_start] += value
             ends[hour_start].add(timestamp)
-        return sorted(
-            (start, kwh)
-            for start, kwh in buckets.items()
-            if ends[start] == {start + timedelta(minutes=30), start + timedelta(hours=1)}
-        )
+        hours = sorted(buckets.items())
+
+        def complete(start: datetime) -> bool:
+            return ends[start] == {start + timedelta(minutes=30), start + timedelta(hours=1)}
+
+        while hours and not complete(hours[0][0]):
+            hours.pop(0)
+        while hours and not complete(hours[-1][0]):
+            hours.pop()
+        return hours
 
     @property
     def today(self) -> float:
