@@ -517,3 +517,25 @@ def test_autumn_groups_require_two_valid_values_per_direction(direction, values)
     times = [datetime(2026, 10, 25, hour, 30, tzinfo=timezone.utc) for hour in (0, 1)]
     assert series == (list(zip(times, [1.0, 2.0])) if values == ["1", "2"] else [])
     assert control == list(zip(times, [0.4, 0.6]))
+
+
+def test_only_edge_hours_need_both_halves():
+    """Partial first/last hours are left out; a partial hour inside the series keeps what ESB sent."""
+    rt = "Active Import Interval (kWh)"
+    labels = [  # interval ends, chronological; Dublin = UTC in January
+        ("10-01-2026 00:00", "0.1"),  # lone end of the 23:00 hour: leading edge, incomplete
+        ("10-01-2026 00:30", "0.2"), ("10-01-2026 01:00", "0.3"),  # complete
+        ("10-01-2026 01:30", "0.4"),  # 01:00 hour missing its 02:00 end: internal, kept
+        ("10-01-2026 02:30", "0.5"), ("10-01-2026 03:00", "0.6"),  # complete
+        ("10-01-2026 03:30", "0.7"),  # trailing edge, incomplete
+    ]
+    rows = [{"Read Date and End Time": d, "Read Value": v, "Read Type": rt} for d, v in reversed(labels)]
+    with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
+        esb = ESBData(data=rows)
+
+    utc = timezone.utc
+    assert esb.hourly_usage() == [
+        (datetime(2026, 1, 10, 0, tzinfo=utc), pytest.approx(0.5)),
+        (datetime(2026, 1, 10, 1, tzinfo=utc), pytest.approx(0.4)),
+        (datetime(2026, 1, 10, 2, tzinfo=utc), pytest.approx(1.1)),
+    ]
