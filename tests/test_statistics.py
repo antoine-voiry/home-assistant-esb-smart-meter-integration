@@ -30,12 +30,13 @@ def _row(dt, value, read_type):
 
 @pytest.fixture
 def hourly_usage():
-    """Two usage hours: 0.3 then 0.4 kWh."""
+    """Two complete usage hours: 0.3 then 0.4 kWh."""
     h = (datetime.now() - timedelta(hours=3)).replace(minute=0, second=0, microsecond=0)
     data = [
         _row(h + timedelta(minutes=30), 0.1, IMPORT),
         _row(h + timedelta(minutes=60), 0.2, IMPORT),
-        _row(h + timedelta(minutes=90), 0.4, IMPORT),
+        _row(h + timedelta(minutes=90), 0.1, IMPORT),
+        _row(h + timedelta(minutes=120), 0.3, IMPORT),
     ]
     return ESBData(data=data).hourly_usage()
 
@@ -277,3 +278,60 @@ async def test_copy_statistics_reports_unreadable_copy(recorder_mock, hass, hour
     await async_wait_recording_done(hass)
     with patch("custom_components.esb_smart_meter.statistics.async_wait_committed", AsyncMock(return_value=False)):
         assert await async_copy_statistics(hass, USAGE_ID, EXTERNAL_ID, unit="kWh", name="Usage") is None
+
+
+async def _stored_rows(hass, statistic_id=USAGE_ID):
+    """Read actual stored state/sum/change, including the preceding baseline."""
+    stats = await hass.async_add_executor_job(
+        statistics_during_period, hass, datetime(2026, 4, 1, tzinfo=timezone.utc), None,
+        {statistic_id}, "hour", None, {"state", "sum", "change"}
+    )
+    return stats.get(statistic_id, [])
+
+
+@pytest.mark.asyncio
+async def test_first_import_publishes_only_complete_hours(recorder_mock, hass):
+    """The lone leading half is left out; the trailing half waits for the next refresh."""
+    h = datetime(2026, 4, 16, 13)  # Dublin: one hour ahead of UTC
+    rows = [_row(h + timedelta(minutes=30 * i), value, IMPORT)
+            for i, value in enumerate([0.25, 0.5, 0.5, 1, 2, 0.9])]
+    assert await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage()) == 4
+    await async_wait_recording_done(hass)
+    stats = await _stored_rows(hass)
+    assert [row["start"] for row in stats] == [
+        datetime(2026, 4, 16, hour, tzinfo=timezone.utc).timestamp() for hour in (12, 13)
+    ]
+    assert [row["sum"] for row in stats] == [1, 4]
+    rows.append(_row(h + timedelta(hours=3), 0.1, IMPORT))
+    assert await async_import_hourly_statistics(hass, USAGE_ID, ESBData(data=rows).hourly_usage()) == 5
+    await async_wait_recording_done(hass)
+    assert [row["change"] for row in await _stored_rows(hass)] == pytest.approx([1, 3, 1])
+
+
+@pytest.mark.asyncio
+async def test_internal_hole_is_imported_not_deferred(recorder_mock, hass):
+    """ESB gaps are permanent: an hour missing a half keeps the half that exists and the import goes ahead."""
+    h = datetime(2026, 4, 16, 13)
+    rows = [_row(h + timedelta(minutes=30 * i), value, IMPORT) for i, value in enumerate([0.5, 0.5, 1, 1, 1.5, 1.5], start=1)]
+    hourly = ESBData(data=rows[:2] + rows[3:]).hourly_usage()  # One end of the middle hour never arrives.
+    assert [kwh for _, kwh in hourly] == pytest.approx([1, 1, 3])
+
+    assert await async_import_hourly_statistics(hass, USAGE_ID, hourly) == pytest.approx(5)
+    await async_wait_recording_done(hass)
+
+    assert [row["sum"] for row in await _stored_rows(hass)] == pytest.approx([1, 2, 5])
+
+
+@pytest.mark.asyncio
+async def test_missing_hour_does_not_block_import(recorder_mock, hass):
+    """A whole hour absent from the download (permanent ESB gap) leaves a hole, not a frozen dashboard."""
+    start = datetime(2026, 4, 16, 13, tzinfo=timezone.utc)
+    hourly = [(start, 1.0), (start + timedelta(hours=3), 2.0), (start + timedelta(hours=4), 3.0)]
+
+    total = await async_import_hourly_statistics(hass, USAGE_ID, hourly)
+    await async_wait_recording_done(hass)
+
+    assert total == pytest.approx(6.0)
+    rows = await _stored_rows(hass)
+    assert [row["start"] for row in rows] == [h.timestamp() for h, _ in hourly]
+    assert [row["sum"] for row in rows] == pytest.approx([1.0, 3.0, 6.0])

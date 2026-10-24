@@ -276,6 +276,14 @@ class TestBaseSensor:
     @pytest.mark.asyncio
     async def test_import_updates_total(self, mock_coordinator, recorder_stub):
         """Importing publishes the new running total as the sensor state."""
+        hour = (datetime.now() - timedelta(hours=3)).replace(minute=0, second=0, microsecond=0)
+        mock_coordinator.data = ESBData(  # one complete hour: both half-hour readings
+            data=[
+                {"Read Date and End Time": (hour + timedelta(minutes=m)).strftime("%d-%m-%Y %H:%M"),
+                 "Read Value": "0.5", "Read Type": "Active Import Interval (kWh)"}
+                for m in (30, 60)
+            ]
+        )
         usage_total = UsageTotalSensor(coordinator=mock_coordinator, mprn="12345678901")
         usage_total.hass = MagicMock()
         usage_total.async_write_ha_state = Mock()
@@ -778,11 +786,12 @@ class TestHistorySensorRefreshHooks:
 
     @staticmethod
     def _ten_days():
+        """Ten days of half-hourly readings, so every hour is complete."""
         end = datetime.now().replace(minute=0, second=0, microsecond=0)
         rows = []
-        for h in range(240):
-            label = (end - timedelta(hours=h)).strftime("%d-%m-%Y %H:%M")
-            rows.append({"Read Date and End Time": label, "Read Value": "0.5", "Read Type": "Active Import Interval (kWh)"})
+        for i in range(480):
+            label = (end - timedelta(minutes=30 * i)).strftime("%d-%m-%Y %H:%M")
+            rows.append({"Read Date and End Time": label, "Read Value": "0.25", "Read Type": "Active Import Interval (kWh)"})
         return ESBData(data=rows)
 
     @pytest.mark.asyncio
@@ -867,7 +876,7 @@ class TestHistorySensorRefreshHooks:
 
         recorder_stub.committed.side_effect = slow_commit
         first = asyncio.create_task(sensor._async_import_statistics())
-        await started.wait()
+        await asyncio.wait_for(started.wait(), timeout=5)
         second = asyncio.create_task(sensor._async_import_statistics())
         done, _pending = await asyncio.wait([second], timeout=0.05)
 
@@ -961,11 +970,13 @@ class TestCostSensors:
     def _coordinator():
         coordinator = MagicMock(spec=DataUpdateCoordinator)
         coordinator.config_entry = MagicMock()
-        label = (datetime.now() - timedelta(days=1)).replace(minute=0).strftime("%d-%m-%Y %H:%M")
-        coordinator.data = ESBData(
+        hour = (datetime.now() - timedelta(days=1)).replace(minute=0, second=0, microsecond=0)
+        coordinator.data = ESBData(  # one complete hour: 1.0 kWh import, 0.5 kWh export
             data=[
-                {"Read Date and End Time": label, "Read Value": "1.0", "Read Type": "Active Import Interval (kWh)"},
-                {"Read Date and End Time": label, "Read Value": "0.5", "Read Type": "Active Export Interval (kWh)"},
+                {"Read Date and End Time": (hour + timedelta(minutes=m)).strftime("%d-%m-%Y %H:%M"),
+                 "Read Value": value, "Read Type": f"Active {kind} Interval (kWh)"}
+                for m in (30, 60)
+                for kind, value in (("Import", "0.5"), ("Export", "0.25"))
             ]
         )
         return coordinator
