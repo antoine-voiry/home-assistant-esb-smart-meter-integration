@@ -1,6 +1,6 @@
 """Test configuration and fixtures."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -97,4 +97,12 @@ def mock_asyncio_sleep():
     """Mock asyncio.sleep globally to avoid waiting during tests."""
     with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         yield mock_sleep
+
+
+@pytest.fixture
+def models_now():
+    """Control the UTC clock used for the rolling cutoff, retaining strptime."""
+    with patch("custom_components.esb_smart_meter.models.datetime", wraps=datetime) as clock:
+        clock.now.return_value = datetime(2026, 7, 15, 12, 37, tzinfo=timezone.utc)
+        yield clock
 

@@ -344,19 +344,23 @@ class TestESBData:
             {"Read Date and End Time": ts(h + timedelta(minutes=30)), "Read Value": "0.1", "Read Type": rt},
             {"Read Date and End Time": ts(h + timedelta(minutes=60)), "Read Value": "0.2", "Read Type": rt},
             {"Read Date and End Time": ts(h + timedelta(minutes=90)), "Read Value": "0.4", "Read Type": rt},
+            {"Read Date and End Time": ts(h + timedelta(minutes=120)), "Read Value": "0.5", "Read Type": rt},
         ]
         buckets = ESBData(data=data).hourly_usage()
         h_utc = h.replace(tzinfo=DUBLIN_TZ).astimezone(timezone.utc)
-        # end 00:30 + 01:00 fall in hour h; end 01:30 falls in hour h+1
-        assert buckets == [(h_utc, pytest.approx(0.3)), (h_utc + timedelta(hours=1), pytest.approx(0.4))]
+        # Both interval ends of each hour are present, so both hours are complete.
+        assert buckets == [(h_utc, pytest.approx(0.3)), (h_utc + timedelta(hours=1), pytest.approx(0.9))]
 
     def test_hourly_export_separate_from_usage(self):
         """Test hourly buckets keep export separate from usage."""
         h = (_dublin_now() - timedelta(hours=3)).replace(minute=0, second=0, microsecond=0)
-        ts = (h + timedelta(minutes=30)).strftime("%d-%m-%Y %H:%M")
+        first = (h + timedelta(minutes=30)).strftime("%d-%m-%Y %H:%M")
+        second = (h + timedelta(minutes=60)).strftime("%d-%m-%Y %H:%M")
         data = [
-            {"Read Date and End Time": ts, "Read Value": "1.5", "Read Type": "Active Import Interval (kWh)"},
-            {"Read Date and End Time": ts, "Read Value": "0.5", "Read Type": "Active Export Interval (kWh)"},
+            {"Read Date and End Time": first, "Read Value": "0.7", "Read Type": "Active Import Interval (kWh)"},
+            {"Read Date and End Time": second, "Read Value": "0.8", "Read Type": "Active Import Interval (kWh)"},
+            {"Read Date and End Time": first, "Read Value": "0.2", "Read Type": "Active Export Interval (kWh)"},
+            {"Read Date and End Time": second, "Read Value": "0.3", "Read Type": "Active Export Interval (kWh)"},
         ]
         esb_data = ESBData(data=data)
         h_utc = h.replace(tzinfo=DUBLIN_TZ).astimezone(timezone.utc)
@@ -388,10 +392,12 @@ class TestESBData:
     def test_march_gap_has_no_phantom_hour(self):
         rt = "Active Import Interval (kWh)"
         labels_newest_first = [
+            ("30-03-2025 03:00", "0.5"),
             ("30-03-2025 02:30", "0.4"),
             ("30-03-2025 02:00", "0.3"),
             ("30-03-2025 00:30", "0.2"),
             ("30-03-2025 00:00", "0.1"),
+            ("29-03-2025 23:30", "0.05"),
         ]
         rows = [{"Read Date and End Time": d, "Read Value": v, "Read Type": rt} for d, v in labels_newest_first]
         with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
@@ -399,9 +405,9 @@ class TestESBData:
 
         utc = timezone.utc
         assert esb.hourly_usage() == [
-            (datetime(2025, 3, 29, 23, 0, tzinfo=utc), pytest.approx(0.1)),
+            (datetime(2025, 3, 29, 23, 0, tzinfo=utc), pytest.approx(0.05 + 0.1)),
             (datetime(2025, 3, 30, 0, 0, tzinfo=utc), pytest.approx(0.2 + 0.3)),  # 00:30 GMT end + 02:00 IST end
-            (datetime(2025, 3, 30, 1, 0, tzinfo=utc), pytest.approx(0.4)),
+            (datetime(2025, 3, 30, 1, 0, tzinfo=utc), pytest.approx(0.4 + 0.5)),
         ]
 
     def test_non_finite_and_negative_values_are_skipped(self):
@@ -473,3 +479,41 @@ class TestESBData:
         readings = esb_data.get_readings_since(since=now - timedelta(hours=12))
         # Readings are returned in chronological order (oldest first)
         assert [r["value"] for r in readings] == [3.0, 5.0]
+
+
+@pytest.mark.parametrize("direction", ["Import", "Export"])
+def test_nonexistent_spring_labels_are_refused(direction):
+    """Invalid civil labels cannot collide with real spring interval ends."""
+    rows = [
+        {"Read Date and End Time": f"29-03-2026 {label}", "Read Value": value,
+         "Read Type": f"Active {direction} Interval (kWh)"}
+        for label, value in [("02:00", "0.3"), ("01:30", "9"), ("01:00", "9"), ("00:30", "0.2")]
+    ]
+    with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
+        esb = ESBData(data=rows)
+    series = esb._data if direction == "Import" else esb._export_data
+    assert series == [(datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc), 0.2),
+                      (datetime(2026, 3, 29, 1, 0, tzinfo=timezone.utc), 0.3)]
+
+
+@pytest.mark.parametrize("direction", ["Import", "Export"])
+@pytest.mark.parametrize("values", [
+    ["1"], ["1", "2"], ["1", "2", "3"],
+    ["1", "2", "nan"], ["1", "2", "inf"], ["1", "2", "-1"], ["1", "2", "bad"],
+    ["1", "nan"], ["1", "bad"],
+])
+def test_autumn_groups_require_two_valid_values_per_direction(direction, values):
+    """Count before filtering; the other direction's valid pair stays independent."""
+    other = "Export" if direction == "Import" else "Import"
+    rows = [
+        {"Read Date and End Time": "25-10-2026 01:30", "Read Value": value,
+         "Read Type": f"Active {kind} Interval (kWh)"}
+        for kind, readings in [(direction, values), (other, ["0.4", "0.6"])]
+        for value in readings
+    ]
+    with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
+        esb = ESBData(data=rows)
+    series, control = (esb._data, esb._export_data) if direction == "Import" else (esb._export_data, esb._data)
+    times = [datetime(2026, 10, 25, hour, 30, tzinfo=timezone.utc) for hour in (0, 1)]
+    assert series == (list(zip(times, [1.0, 2.0])) if values == ["1", "2"] else [])
+    assert control == list(zip(times, [0.4, 0.6]))

@@ -29,12 +29,19 @@ async def async_import_hourly_statistics(
     statistic_id: str,
     hourly: list[tuple[datetime, float]],
 ) -> float | None:
-    """Import the hourly buckets and return the cumulative total (None if empty).
+    """Import hourly buckets; return None for empty or internally incomplete input.
 
     Sums are anchored to the baseline recorded *before* the window, so the full
     window can be reimported each run without the recorder's "now" row skewing it.
     """
     if not hourly:
+        return None
+
+    # Refuse the whole capture before recorder access: a partial prefix would
+    # change History/Total while leaving the omitted internal hours untouched.
+    gaps = sum(later - earlier > timedelta(hours=1) for (earlier, _), (later, _) in zip(hourly, hourly[1:]))
+    if gaps:
+        _LOGGER.warning("Deferred hourly import with %d internal gaps", gaps)
         return None
 
     # ESBData yields UTC-aware hours; naive input is treated as Irish local time
