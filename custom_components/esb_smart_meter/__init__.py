@@ -10,6 +10,7 @@ from homeassistant.helpers import config_validation as cv
 from .api_client import ESBDataApi
 from .const import CONF_MPRN, CONF_PASSWORD, CONF_UPDATE_INTERVAL, CONF_USERNAME, DOMAIN
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator, ESBRuntimeData
+from .energy_check import async_remove_energy_issue, async_setup_energy_check
 from .import_state import COST_SERIES, ImportState
 from .utils import create_esb_session
 
@@ -66,6 +67,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
     # Forward setup to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Warn (Repairs) if the Energy dashboard uses ESB entities instead of the ESB statistics
+    await async_setup_energy_check(hass)
+
     return True
 
 
@@ -108,3 +112,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> None
     """Delete the per-series import state when the integration is removed."""
     for series in COST_SERIES:
         await ImportState(hass, entry.entry_id, series).async_remove()
+    async_remove_energy_issue(hass, entry.entry_id)

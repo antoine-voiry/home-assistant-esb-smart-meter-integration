@@ -73,6 +73,10 @@
     "captcha_required": {
       "title": "ESB Networks requires CAPTCHA verification",
       "description": "ESB Networks is asking for a CAPTCHA for meter {mprn}. Log in at {esb_url} in your browser, then open Settings → Devices & services → ESB Smart Meter → Configure → Provide Session Cookies and paste your cookies. Updates resume automatically once the cookies work."
+    },
+    "energy_dashboard_entities": {
+      "title": "Energy dashboard uses ESB sensors instead of ESB statistics",
+      "description": "The Energy dashboard uses {entities}. These sensors don't hold the meter's hourly history, so the dashboard shows nothing or wrong values.\n\nIn Settings → Dashboards → Energy, edit the grid connection and pick these statistics instead:\n- Energy imported from grid: **{usage}**\n- Energy exported to grid: **{export}**\n- Total costs: **{usage_cost}**, and money received: **{export_credit}** (once a tariff period is added)\n\nRemove grid connections that use ESB period sensors such as \"last 7 days\" or \"this month\". This notice clears itself once the dashboard no longer uses ESB sensors."
     }
   },
   "entity": {

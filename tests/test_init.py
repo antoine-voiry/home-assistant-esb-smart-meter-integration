@@ -378,3 +378,17 @@ async def test_remove_entry_deletes_import_state():
         await async_remove_entry(hass, entry)
 
     assert [c.args for c in state_cls.call_args_list] == [(hass, "entry1", "usage_cost"), (hass, "entry1", "export_credit")]
+
+
+@pytest.mark.asyncio
+async def test_remove_entry_clears_energy_issue():
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "entry1"
+    with patch("custom_components.esb_smart_meter.ImportState") as state_cls, patch(
+        "custom_components.esb_smart_meter.async_remove_energy_issue"
+    ) as remove_issue:
+        state_cls.return_value.async_remove = AsyncMock()
+        await async_remove_entry(hass, entry)
+
+    remove_issue.assert_called_once_with(hass, "entry1")

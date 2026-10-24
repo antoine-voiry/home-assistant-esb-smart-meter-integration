@@ -333,3 +333,39 @@ async def test_upgrade_moves_history_and_energy_dashboard(recorder_mock, hass, e
     assert manager.data["energy_sources"][0]["stat_energy_from"] == USAGE_ID
     assert registry.async_get(old.entity_id) is None
     assert float(hass.states.get("sensor.esb_electricity_usage_total").state) == pytest.approx(expected_total)
+
+
+@pytest.mark.asyncio
+async def test_setup_flags_energy_dashboard_using_esb_entities(
+    recorder_mock, hass, enable_custom_integrations, entry, session
+):
+    """An Energy dashboard pointed at an ESB period sensor gets a Repair issue on setup."""
+    from homeassistant.components.energy import data as energy_data
+    from homeassistant.helpers import issue_registry as ir
+    from homeassistant.setup import async_setup_component
+
+    assert await async_setup_component(hass, "energy", {})
+    manager = await energy_data.async_get_manager(hass)
+    await _setup(hass, entry, AsyncMock(return_value=_ten_days_of_usage()))
+    await manager.async_update(
+        {
+            "energy_sources": [
+                {
+                    "type": "grid",
+                    "stat_energy_from": "sensor.esb_electricity_usage_last_7_days",
+                    "stat_energy_to": None,
+                    "stat_cost": None,
+                    "entity_energy_price": None,
+                    "number_energy_price": None,
+                    "stat_compensation": None,
+                    "entity_energy_price_export": None,
+                    "number_energy_price_export": None,
+                    "cost_adjustment_day": 0,
+                }
+            ]
+        }
+    )
+
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"energy_dashboard_entities_{entry.entry_id}")
+    assert issue is not None
+    assert issue.translation_placeholders["entities"] == "sensor.esb_electricity_usage_last_7_days"

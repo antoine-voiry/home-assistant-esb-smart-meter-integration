@@ -53,3 +53,10 @@ def test_tariff_subentry_is_translated():
             "effective_from", "day_rate", "night_rate", "peak_rate", "standing_charge", "export_rate",
             "night_start", "night_end", "peak_start", "peak_end", "peak_weekdays_only",
         }
+
+
+def test_energy_dashboard_issue_is_translated():
+    issue = _load("translations/en.json")["issues"]["energy_dashboard_entities"]
+    assert issue["title"].strip()
+    for placeholder in ("{entities}", "{usage}", "{export}", "{usage_cost}", "{export_credit}"):
+        assert placeholder in issue["description"]
