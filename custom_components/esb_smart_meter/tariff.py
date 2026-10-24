@@ -80,12 +80,15 @@ class TariffPeriod:
 
     def rate_at(self, local: datetime) -> float:
         """Return the €/kWh import rate for an Irish local time."""
-        peak_today = not (self.peak_weekdays_only and local.weekday() >= 5)
-        if peak_today and _in_band(local.hour, self.peak_start, self.peak_end):
+        if self._peak_applies_on(local) and _in_band(local.hour, self.peak_start, self.peak_end):
             return self.peak_rate
         if _in_band(local.hour, self.night_start, self.night_end):
             return self.night_rate
         return self.day_rate
+
+    def _peak_applies_on(self, local: datetime) -> bool:
+        """Return False at weekends for a weekday-only peak."""
+        return not self.peak_weekdays_only or local.weekday() < 5
 
 
 def tariff_periods(entry: ConfigEntry) -> list[TariffPeriod]:
