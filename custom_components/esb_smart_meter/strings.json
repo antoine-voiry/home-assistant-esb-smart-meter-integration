@@ -12,6 +12,13 @@
         "data_description": {
           "mprn": "Your 11-digit Meter Point Reference Number"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate ESB Networks",
+        "description": "ESB Networks rejected the password for {username}. Enter your current ESB Networks password.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -19,10 +26,12 @@
       "mprn_exists": "This MPRN is already configured",
       "cannot_connect": "Failed to connect to ESB Networks",
       "invalid_auth": "Invalid username or password",
-      "unknown": "An unexpected error occurred"
+      "unknown": "An unexpected error occurred",
+      "empty_password": "Password cannot be empty"
     },
     "abort": {
-      "already_configured": "This MPRN is already configured"
+      "already_configured": "This MPRN is already configured",
+      "reauth_successful": "Re-authentication was successful"
     }
   },
   "options": {
@@ -64,6 +73,147 @@
     "captcha_required": {
       "title": "ESB Networks requires CAPTCHA verification",
       "description": "ESB Networks is asking for a CAPTCHA for meter {mprn}. Log in at {esb_url} in your browser, then open Settings → Devices & services → ESB Smart Meter → Configure → Provide Session Cookies and paste your cookies. Updates resume automatically once the cookies work."
+    },
+    "energy_dashboard_entities": {
+      "title": "Energy dashboard uses ESB sensors instead of ESB statistics",
+      "description": "The Energy dashboard uses {entities}. These sensors don't hold the meter's hourly history, so the dashboard shows nothing or wrong values.\n\nIn Settings → Dashboards → Energy, edit the grid connection and pick these statistics instead:\n- Energy imported from grid: **{usage}**\n- Energy exported to grid: **{export}**\n- Total costs: **{usage_cost}**, and money received: **{export_credit}** (once a tariff period is added)\n\nRemove grid connections that use ESB period sensors such as \"last 7 days\" or \"this month\". This notice clears itself once the dashboard no longer uses ESB sensors."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "usage_today": {
+        "name": "Usage today"
+      },
+      "usage_last_24_hours": {
+        "name": "Usage last 24 hours"
+      },
+      "usage_this_week": {
+        "name": "Usage this week"
+      },
+      "usage_last_7_days": {
+        "name": "Usage last 7 days"
+      },
+      "usage_this_month": {
+        "name": "Usage this month"
+      },
+      "usage_last_30_days": {
+        "name": "Usage last 30 days"
+      },
+      "export_today": {
+        "name": "Export today"
+      },
+      "export_last_24_hours": {
+        "name": "Export last 24 hours"
+      },
+      "export_this_week": {
+        "name": "Export this week"
+      },
+      "export_last_7_days": {
+        "name": "Export last 7 days"
+      },
+      "export_this_month": {
+        "name": "Export this month"
+      },
+      "export_last_30_days": {
+        "name": "Export last 30 days"
+      },
+      "usage_cost_total": {
+        "name": "Usage cost total"
+      },
+      "export_credit_total": {
+        "name": "Export credit total"
+      },
+      "usage_total": {
+        "name": "Usage total"
+      },
+      "export_total": {
+        "name": "Export total"
+      },
+      "last_update": {
+        "name": "Last update"
+      },
+      "api_status": {
+        "name": "API status"
+      },
+      "data_age": {
+        "name": "Data age"
+      },
+      "circuit_breaker_status": {
+        "name": "Circuit breaker status"
+      }
+    }
+  },
+  "config_subentries": {
+    "tariff": {
+      "entry_type": "Tariff period",
+      "initiate_flow": {
+        "user": "Add tariff period",
+        "reconfigure": "Edit tariff period"
+      },
+      "step": {
+        "user": {
+          "title": "Start from",
+          "description": "Prefill the rates from a supplier's smart tariff, or start blank.",
+          "data": {
+            "preset": "Tariff"
+          }
+        },
+        "rates": {
+          "title": "Tariff period",
+          "description": "Rates include VAT, as printed on your bill. Supplier presets use example rates from October 2026, so check them against your bill. A period applies from its start date until the next period starts; add a new period when prices change.",
+          "data": {
+            "effective_from": "Start date",
+            "day_rate": "Day rate",
+            "night_rate": "Night rate",
+            "peak_rate": "Peak rate",
+            "standing_charge": "Standing charge",
+            "export_rate": "Export rate",
+            "night_start": "Night starts (hour)",
+            "night_end": "Night ends (hour)",
+            "peak_start": "Peak starts (hour)",
+            "peak_end": "Peak ends (hour)",
+            "peak_weekdays_only": "Peak on weekdays only"
+          },
+          "data_description": {
+            "export_rate": "Leave at 0 if you don't export or aren't paid for export",
+            "night_end": "First hour that is no longer night, e.g. 8 for 23:00–08:00",
+            "peak_end": "First hour that is no longer peak, e.g. 19 for 17:00–19:00"
+          }
+        },
+        "reconfigure": {
+          "title": "Edit tariff period",
+          "data": {
+            "effective_from": "Start date",
+            "day_rate": "Day rate",
+            "night_rate": "Night rate",
+            "peak_rate": "Peak rate",
+            "standing_charge": "Standing charge",
+            "export_rate": "Export rate",
+            "night_start": "Night starts (hour)",
+            "night_end": "Night ends (hour)",
+            "peak_start": "Peak starts (hour)",
+            "peak_end": "Peak ends (hour)",
+            "peak_weekdays_only": "Peak on weekdays only"
+          }
+        }
+      },
+      "error": {
+        "duplicate_period": "Another tariff period already starts on this date",
+        "empty_band": "Start and end hour must be different",
+        "peak_overlaps_night": "Peak hours must not overlap night hours"
+      },
+      "abort": {
+        "reconfigure_successful": "Tariff period updated"
+      }
+    }
+  },
+  "selector": {
+    "preset": {
+      "options": {
+        "sse_airtricity_smart": "SSE Airtricity smart (October 2026 example rates)",
+        "bord_gais_smart": "Bord Gáis Energy smart (October 2026 example rates)",
+        "custom": "Custom (enter your own rates)"
+      }
     }
   }
 }

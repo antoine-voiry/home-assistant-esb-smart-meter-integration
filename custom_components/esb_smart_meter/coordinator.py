@@ -2,19 +2,36 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import aiohttp
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api_client import ESBDataApi
+from .api_client import ESBDataApi, InvalidAuthException
 from .const import CAPTCHA_NOTIFICATION_ID, DEFAULT_SCAN_INTERVAL, DOMAIN, ESB_MYACCOUNT_URL
 from .models import ESBData
 from .session_manager import CaptchaRequiredException
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass
+class ESBRuntimeData:
+    """Per-entry objects, stored on entry.runtime_data."""
+
+    coordinator: "ESBDataUpdateCoordinator"
+    session: aiohttp.ClientSession
+    # entry.data and entry.options at setup; None makes any update reload
+    settings: tuple[dict[str, Any], dict[str, Any]] | None = None
+
+
+type ESBConfigEntry = ConfigEntry[ESBRuntimeData]
 
 
 class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
@@ -33,7 +50,7 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         hass: HomeAssistant,
         esb_api: ESBDataApi,
         mprn: str,
-        config_entry,
+        config_entry: ESBConfigEntry,
         update_interval: timedelta = DEFAULT_SCAN_INTERVAL,
     ) -> None:
         """
@@ -49,12 +66,12 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name=f"{DOMAIN}_{mprn}",
             update_interval=update_interval,
         )
         self.esb_api = esb_api
         self.mprn = mprn
-        self.config_entry = config_entry
         self._captcha_notification_sent = False
         self.last_successful_update_time: datetime | None = None
 
@@ -125,6 +142,10 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             # Return None instead of raising to prevent coordinator retry logic
             # This stops the exponential backoff hammering
             return None
+
+        except InvalidAuthException as err:
+            # Stops polling and prompts the user to re-enter their password
+            raise ConfigEntryAuthFailed(f"ESB rejected the credentials for MPRN {self.mprn}") from err
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             # Network errors - let coordinator handle retry

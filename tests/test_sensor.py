@@ -1,16 +1,23 @@
 """Integration tests for sensor.py with coordinator pattern."""
 
-from datetime import datetime
+import asyncio
+import json
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from custom_components.esb_smart_meter.const import DOMAIN
+from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.models import ESBData
+from custom_components.esb_smart_meter.tariff import TariffPeriod, fingerprint, usage_costs
 from custom_components.esb_smart_meter.sensor import (
     ApiStatusSensor,
     CircuitBreakerStatusSensor,
@@ -28,13 +35,30 @@ from custom_components.esb_smart_meter.sensor import (
     ExportThisMonthSensor,
     ExportThisWeekSensor,
     ExportTodaySensor,
-    UsageHistorySensor,
-    ExportHistorySensor,
     UsageTotalSensor,
     ExportTotalSensor,
+    ExportCreditSensor,
+    UsageCostSensor,
     async_setup_entry,
 )
 from tests.conftest import _async_create_task_handler
+
+COMPONENT = Path(__file__).parent.parent / "custom_components" / "esb_smart_meter"
+
+
+@pytest.fixture
+def recorder_stub():
+    """Stub the recorder helpers the history sensors call: stored hours, import, commit wait."""
+    with patch(
+        "custom_components.esb_smart_meter.sensor.async_stored_hours", new=AsyncMock(return_value=set())
+    ) as stored, patch(
+        "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock(return_value=1.0)
+    ) as importer, patch(
+        "custom_components.esb_smart_meter.sensor.async_wait_committed", new=AsyncMock(return_value=True)
+    ) as committed, patch(
+        "custom_components.esb_smart_meter.sensor.async_migrate_legacy_history", new=AsyncMock()
+    ) as migrate:
+        yield SimpleNamespace(stored=stored, importer=importer, committed=committed, migrate=migrate)
 
 
 class TestAsyncSetupEntry:
@@ -80,26 +104,27 @@ class TestAsyncSetupEntry:
     def mock_hass(self, mock_coordinator):
         """Create mock Home Assistant instance."""
         hass = MagicMock(spec=HomeAssistant)
-        hass.data = {DOMAIN: {"test_entry_id": {"coordinator": mock_coordinator}}}
         # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
 
     @pytest.fixture
-    def mock_config_entry(self):
+    def mock_config_entry(self, mock_coordinator):
         """Create mock config entry."""
         entry = MagicMock(spec=ConfigEntry)
         entry.entry_id = "test_entry_id"
+        entry.runtime_data = ESBRuntimeData(coordinator=mock_coordinator, session=MagicMock())
+        entry.subentries = {}
         return entry
 
     @pytest.mark.asyncio
     async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
-        """Test that setup_entry creates all 20 sensors (period, export, history, total, diagnostic)."""
+        """Test that setup_entry creates all 20 sensors (period, export, kWh and euro totals, diagnostic)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # Verify 20 sensors were created (12 period + 2 history + 2 total + 4 diagnostic)
+        # Verify 20 sensors were created (12 period + 2 kWh totals + 2 euro totals + 4 diagnostic)
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
         assert len(sensors) == 20
@@ -117,16 +142,57 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[9], ExportLast7DaysSensor)
         assert isinstance(sensors[10], ExportThisMonthSensor)
         assert isinstance(sensors[11], ExportLast30DaysSensor)
-        # History (statistics) and their display totals
-        assert isinstance(sensors[12], UsageHistorySensor)
-        assert isinstance(sensors[13], ExportHistorySensor)
-        assert isinstance(sensors[14], UsageTotalSensor)
-        assert isinstance(sensors[15], ExportTotalSensor)
+        # Totals backed by the imported statistics
+        assert isinstance(sensors[12], UsageTotalSensor)
+        assert isinstance(sensors[13], ExportTotalSensor)
+        assert isinstance(sensors[14], UsageCostSensor)
+        assert isinstance(sensors[15], ExportCreditSensor)
         # Diagnostic sensors
         assert isinstance(sensors[16], LastUpdateSensor)
         assert isinstance(sensors[17], ApiStatusSensor)
         assert isinstance(sensors[18], DataAgeSensor)
         assert isinstance(sensors[19], CircuitBreakerStatusSensor)
+
+    @pytest.mark.asyncio
+    async def test_unique_ids_are_unchanged(self, mock_hass, mock_config_entry):
+        """Registry entries (and so entity ids and statistics) are keyed on these; never change them."""
+        async_add_entities = MagicMock()
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+        suffixes = [s.unique_id.removeprefix("12345678901_") for s in async_add_entities.call_args[0][0]]
+        assert suffixes == [
+            "today", "last_24_hours", "this_week", "last_7_days", "this_month", "last_30_days",
+            "export_today", "export_last_24_hours", "export_this_week", "export_last_7_days",
+            "export_this_month", "export_last_30_days",
+            "usage_total", "export_total", "usage_cost_total", "export_credit_total",
+            "last_update", "api_status", "data_age", "circuit_breaker_status",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_sensors_use_translated_entity_names(self, mock_hass, mock_config_entry):
+        """Names come from translations under the device name, not hard-coded strings."""
+        names = json.loads((COMPONENT / "translations" / "en.json").read_text())["entity"]["sensor"]
+        async_add_entities = MagicMock()
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+        sensors = async_add_entities.call_args[0][0]
+        keys = [s.translation_key for s in sensors]
+        assert len(set(keys)) == len(sensors)
+        for sensor in sensors:
+            assert sensor.has_entity_name is True
+            assert not hasattr(sensor, "_attr_name"), type(sensor).__name__
+            assert names[sensor.translation_key]["name"].strip()
+
+    @pytest.mark.asyncio
+    async def test_status_sensors_are_diagnostic(self, mock_hass, mock_config_entry):
+        async_add_entities = MagicMock()
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+        sensors = async_add_entities.call_args[0][0]
+        diagnostic = (LastUpdateSensor, ApiStatusSensor, DataAgeSensor, CircuitBreakerStatusSensor)
+        for sensor in sensors:
+            expected = EntityCategory.DIAGNOSTIC if isinstance(sensor, diagnostic) else None
+            assert sensor.entity_category == expected, type(sensor).__name__
 
 
 class TestBaseSensor:
@@ -192,46 +258,41 @@ class TestBaseSensor:
         assert import_sensor.native_value == 1.5
         assert export_sensor.unique_id == "12345678901_export_today"
 
-    def test_history_sensor_config(self, mock_coordinator):
-        """Test history sensor id; it stays stateless (no auto-compiled stats)."""
-        usage_history = UsageHistorySensor(coordinator=mock_coordinator, mprn="12345678901")
-
-        assert usage_history.unique_id == "12345678901_usage_history"
-        # No state_class, so the recorder won't auto-compile a competing statistics series
-        assert usage_history.state_class is None
-        assert usage_history.native_value is None
-
     def test_total_sensor_config(self, mock_coordinator):
-        """Test the display total sensor id and that it carries no statistics."""
-        usage_history = UsageHistorySensor(coordinator=mock_coordinator, mprn="12345678901")
-        usage_total = UsageTotalSensor(
-            coordinator=mock_coordinator, mprn="12345678901", history=usage_history
-        )
+        """Usage total imports an external statistic and shows its running total."""
+        usage_total = UsageTotalSensor(coordinator=mock_coordinator, mprn="12345678901")
 
         assert usage_total.unique_id == "12345678901_usage_total"
-        # Display only: no state_class means no auto-compiled statistics for this entity
+        assert usage_total.entity_id == "sensor.esb_electricity_usage_total"
+        assert usage_total._statistic_id == "esb_smart_meter:usage_12345678901"
+        assert usage_total._statistic_name == "ESB Smart Meter (12345678901) Usage"
+        # No state_class, so the recorder won't auto-compile a competing statistics series
         assert usage_total.state_class is None
         assert usage_total.native_value is None
+        export_total = ExportTotalSensor(coordinator=mock_coordinator, mprn="12345678901")
+        assert export_total._statistic_id == "esb_smart_meter:export_12345678901"
+        assert export_total._statistic_name == "ESB Smart Meter (12345678901) Export"
 
     @pytest.mark.asyncio
-    async def test_history_import_updates_total(self, mock_coordinator):
-        """Test importing history refreshes the paired total sensor's value."""
-        usage_history = UsageHistorySensor(coordinator=mock_coordinator, mprn="12345678901")
-        usage_total = UsageTotalSensor(
-            coordinator=mock_coordinator, mprn="12345678901", history=usage_history
+    async def test_import_updates_total(self, mock_coordinator, recorder_stub):
+        """Importing publishes the new running total as the sensor state."""
+        hour = (datetime.now() - timedelta(hours=3)).replace(minute=0, second=0, microsecond=0)
+        mock_coordinator.data = ESBData(  # one complete hour: both half-hour readings
+            data=[
+                {"Read Date and End Time": (hour + timedelta(minutes=m)).strftime("%d-%m-%Y %H:%M"),
+                 "Read Value": "0.5", "Read Type": "Active Import Interval (kWh)"}
+                for m in (30, 60)
+            ]
         )
-        usage_history.hass = MagicMock()
-        usage_history.entity_id = "sensor.esb_electricity_usage_history"
+        usage_total = UsageTotalSensor(coordinator=mock_coordinator, mprn="12345678901")
         usage_total.hass = MagicMock()
         usage_total.async_write_ha_state = Mock()
+        recorder_stub.stored.return_value = {h for h, _ in mock_coordinator.data.hourly_usage()}
+        recorder_stub.importer.return_value = 6.641
 
-        with patch(
-            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics",
-            new=AsyncMock(return_value=6.641),
-        ) as mock_import:
-            await usage_history._async_import_statistics()
+        await usage_total._async_import_statistics()
 
-        mock_import.assert_awaited_once()
+        recorder_stub.importer.assert_awaited_once()
         assert usage_total.native_value == 6.641
         usage_total.async_write_ha_state.assert_called_once()
 
@@ -629,7 +690,7 @@ class TestCircuitBreakerStatusSensor:
     def test_sensor_init(self, mock_coordinator):
         """Test initialization."""
         sensor = CircuitBreakerStatusSensor(coordinator=mock_coordinator, mprn="12345678901")
-        assert sensor._attr_name == "ESB Smart Meter: Circuit Breaker Status"
+        assert sensor.translation_key == "circuit_breaker_status"
         assert sensor._attr_unique_id == "12345678901_circuit_breaker_status"
 
     def test_native_value_closed(self, mock_coordinator):
@@ -710,42 +771,404 @@ def test_period_sensor_readings_not_recorded(sensor_cls):
 
 
 class TestHistorySensorRefreshHooks:
-    """History sensors re-import statistics whenever the coordinator refreshes."""
+    """Total sensors re-import their statistics whenever the coordinator refreshes."""
 
-    def _sensor(self, data):
+    STATISTIC_ID = "esb_smart_meter:usage_12345678901"
+
+    def _sensor(self, data, cls=None):
         coordinator = MagicMock(spec=DataUpdateCoordinator)
         coordinator.data = data
-        sensor = UsageHistorySensor(coordinator=coordinator, mprn="12345678901")
+        coordinator.config_entry = MagicMock()
+        sensor = (cls or UsageTotalSensor)(coordinator=coordinator, mprn="12345678901")
         sensor.hass = MagicMock()
-        sensor.entity_id = "sensor.esb_electricity_usage_history"
+        sensor.async_write_ha_state = Mock()
         return sensor
 
-    def test_coordinator_update_schedules_import(self):
+    @staticmethod
+    def _ten_days():
+        """Ten days of half-hourly readings, so every hour is complete."""
+        end = datetime.now().replace(minute=0, second=0, microsecond=0)
+        rows = []
+        for i in range(480):
+            label = (end - timedelta(minutes=30 * i)).strftime("%d-%m-%Y %H:%M")
+            rows.append({"Read Date and End Time": label, "Read Value": "0.25", "Read Type": "Active Import Interval (kWh)"})
+        return ESBData(data=rows)
+
+    @pytest.mark.asyncio
+    async def test_first_import_is_full(self, recorder_stub):
+        sensor = self._sensor(data=self._ten_days())
+        hourly = sensor.coordinator.data.hourly_usage()
+
+        await sensor._async_import_statistics()
+
+        assert recorder_stub.importer.call_args.args[2] == hourly
+        # The stored-hours query covers exactly the downloaded range
+        _hass, statistic_id, start, end = recorder_stub.stored.call_args.args
+        assert (statistic_id, start, end) == (self.STATISTIC_ID, hourly[0][0], hourly[-1][0] + timedelta(hours=1))
+
+    @pytest.mark.asyncio
+    async def test_later_imports_cover_recent_days_only(self, recorder_stub):
+        sensor = self._sensor(data=self._ten_days())
+        recorder_stub.stored.return_value = {h for h, _ in sensor.coordinator.data.hourly_usage()}
+
+        await sensor._async_import_statistics()
+
+        hours = recorder_stub.importer.call_args.args[2]
+        assert hours[-1][0] - hours[0][0] == timedelta(days=7)
+        assert recorder_stub.importer.call_args.kwargs["unit"] == "kWh"
+
+    @pytest.mark.asyncio
+    async def test_later_imports_resume_from_last_stored_hour(self, recorder_stub):
+        """After an outage longer than the window, import from the hour after the last stored one."""
+        sensor = self._sensor(data=self._ten_days())
+        hourly = sensor.coordinator.data.hourly_usage()
+        last_stored = hourly[-1][0] - timedelta(days=9)
+        recorder_stub.stored.return_value = {h for h, _ in hourly if h <= last_stored}
+
+        await sensor._async_import_statistics()
+
+        hours = recorder_stub.importer.call_args.args[2]
+        assert hours[0][0] == last_stored + timedelta(hours=1)
+        assert hours[-1][0] == hourly[-1][0]
+
+    @pytest.mark.asyncio
+    async def test_hours_filled_in_late_trigger_full_import(self, recorder_stub):
+        """ESB filling a gap older than the recent window must not leave it missing forever."""
+        sensor = self._sensor(data=self._ten_days())
+        hourly = sensor.coordinator.data.hourly_usage()
+        late_filled = hourly[24][0]  # 9 days before the newest hour
+        recorder_stub.stored.return_value = {h for h, _ in hourly} - {late_filled}
+
+        await sensor._async_import_statistics()
+
+        assert recorder_stub.importer.call_args.args[2] == hourly
+
+    @pytest.mark.asyncio
+    async def test_hours_after_newest_stored_are_not_a_gap(self, recorder_stub):
+        """New data since the last refresh is a normal recent import, not a backfill."""
+        sensor = self._sensor(data=self._ten_days())
+        hourly = sensor.coordinator.data.hourly_usage()
+        recorder_stub.stored.return_value = {h for h, _ in hourly[:-30]}
+
+        await sensor._async_import_statistics()
+
+        assert len(recorder_stub.importer.call_args.args[2]) < len(hourly)
+
+    @pytest.mark.asyncio
+    async def test_import_waits_for_recorder_commit(self, recorder_stub):
+        sensor = self._sensor(data=self._ten_days())
+
+        await sensor._async_import_statistics()
+
+        hourly = sensor.coordinator.data.hourly_usage()
+        recorder_stub.committed.assert_awaited_once_with(sensor.hass, self.STATISTIC_ID, hourly[-1][0], 1.0)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_imports_run_one_at_a_time(self, recorder_stub):
+        """A refresh during an import waits, so it reads committed sums, not stale ones."""
+        sensor = self._sensor(data=self._ten_days())
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow_commit(*_args):
+            started.set()
+            await release.wait()
+            return True
+
+        recorder_stub.committed.side_effect = slow_commit
+        first = asyncio.create_task(sensor._async_import_statistics())
+        await asyncio.wait_for(started.wait(), timeout=5)
+        second = asyncio.create_task(sensor._async_import_statistics())
+        done, _pending = await asyncio.wait([second], timeout=0.05)
+
+        assert not done
+        assert recorder_stub.importer.await_count == 1
+        release.set()
+        await asyncio.gather(first, second)
+        assert recorder_stub.importer.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "cls, legacy, statistic_id, name",
+        [
+            (UsageTotalSensor, "12345678901_usage_history", "esb_smart_meter:usage_12345678901", "Usage"),
+            (ExportTotalSensor, "12345678901_export_history", "esb_smart_meter:export_12345678901", "Export"),
+        ],
+    )
+    async def test_legacy_history_migrated_once_before_first_import(
+        self, recorder_stub, cls, legacy, statistic_id, name
+    ):
+        """The old History entity's statistics move over before anything new is imported."""
+        sensor = self._sensor(data=self._ten_days(), cls=cls)
+        order = []
+        recorder_stub.migrate.side_effect = lambda *a, **k: order.append("migrate")
+        recorder_stub.stored.side_effect = lambda *a: order.append("stored") or set()
+
+        await sensor._async_import_statistics()
+        await sensor._async_import_statistics()
+
+        recorder_stub.migrate.assert_awaited_once_with(
+            sensor.hass, legacy, statistic_id, unit="kWh", name=f"ESB Smart Meter (12345678901) {name}"
+        )
+        assert order[0] == "migrate"
+
+    @pytest.mark.asyncio
+    async def test_migration_runs_even_without_data(self, recorder_stub):
+        """A CAPTCHA'd first refresh (no data) must not skip moving the old history."""
+        sensor = self._sensor(data=None)
+        await sensor._async_import_statistics()
+        recorder_stub.migrate.assert_awaited_once()
+
+    def test_coordinator_update_schedules_background_import(self):
         sensor = self._sensor(data=None)
         with patch.object(sensor, "async_write_ha_state"):
             sensor._handle_coordinator_update()
-        sensor.hass.async_create_task.assert_called_once()
-        sensor.hass.async_create_task.call_args.args[0].close()
+        create = sensor.coordinator.config_entry.async_create_background_task
+        create.assert_called_once()
+        hass, coro, name = create.call_args.args
+        assert hass is sensor.hass
+        assert name == "sensor.esb_electricity_usage_total statistics import"
+        coro.close()
 
     @pytest.mark.asyncio
-    async def test_import_skipped_without_data(self):
-        sensor = self._sensor(data=None)
-        with patch(
-            "custom_components.esb_smart_meter.sensor.async_import_hourly_statistics", new=AsyncMock()
-        ) as importer:
-            await sensor._async_import_statistics()
-        importer.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_added_to_hass_imports_immediately(self):
+    async def test_added_to_hass_schedules_import_without_waiting(self):
+        """A two-year backfill runs in the background instead of holding up platform setup."""
         sensor = self._sensor(data=None)
         with patch(
             "homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass", new=AsyncMock()
-        ), patch.object(sensor, "_async_import_statistics", new=AsyncMock()) as do_import:
+        ):
             await sensor.async_added_to_hass()
-        do_import.assert_awaited_once()
+        create = sensor.coordinator.config_entry.async_create_background_task
+        create.assert_called_once()
+        create.call_args.args[1].close()
 
-    def test_history_sensor_is_stateless_and_on_device(self):
+    @pytest.mark.asyncio
+    async def test_import_skipped_without_data(self, recorder_stub):
+        sensor = self._sensor(data=None)
+        await sensor._async_import_statistics()
+        recorder_stub.importer.assert_not_awaited()
+        recorder_stub.committed.assert_not_awaited()
+
+    def test_total_sensor_is_on_device(self):
         sensor = self._sensor(data=None)
         assert sensor.native_value is None
         assert (DOMAIN, "12345678901") in sensor.device_info["identifiers"]
+
+
+class TestCostSensors:
+    """Cost series: external statistics, display totals, re-costing and zeroing."""
+
+    @staticmethod
+    def _entry(*periods):
+        entry = MagicMock()
+        entry.entry_id = "entry1"
+        entry.subentries = {
+            str(i): SimpleNamespace(subentry_type="tariff", data=p.as_data()) for i, p in enumerate(periods)
+        }
+        return entry
+
+    @staticmethod
+    def _coordinator():
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        coordinator.config_entry = MagicMock()
+        hour = (datetime.now() - timedelta(days=1)).replace(minute=0, second=0, microsecond=0)
+        coordinator.data = ESBData(  # one complete hour: 1.0 kWh import, 0.5 kWh export
+            data=[
+                {"Read Date and End Time": (hour + timedelta(minutes=m)).strftime("%d-%m-%Y %H:%M"),
+                 "Read Value": value, "Read Type": f"Active {kind} Interval (kWh)"}
+                for m in (30, 60)
+                for kind, value in (("Import", "0.5"), ("Export", "0.25"))
+            ]
+        )
+        return coordinator
+
+    def _sensor(self, cls, *periods):
+        sensor = cls(coordinator=self._coordinator(), mprn="12345678901", entry=self._entry(*periods))
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = Mock()
+        return sensor
+
+    PERIOD = TariffPeriod(
+        effective_from=date(2020, 1, 1), day_rate=0.3, night_rate=0.2, peak_rate=0.4, standing_charge=0.72,
+        export_rate=0.2,
+    )
+
+    @staticmethod
+    def _state(stored_fingerprint, first_hour):
+        state = MagicMock()
+        state.async_get_fingerprint = AsyncMock(return_value=stored_fingerprint)
+        state.async_get_first_hour = AsyncMock(return_value=first_hour)
+        state.async_set_fingerprint = AsyncMock()
+        return state
+
+    # 2026-01-10 00:00 to 2026-01-11 23:00 UTC (= Dublin in winter), 1 kWh per hour
+    OLDEST = datetime(2026, 1, 10, tzinfo=timezone.utc)
+    NEWEST = datetime(2026, 1, 11, 23, tzinfo=timezone.utc)
+
+    def _two_days_sensor(self, *periods):
+        sensor = self._sensor(UsageCostSensor, *periods)
+        start = datetime(2026, 1, 10, 0, 30)
+        sensor.coordinator.data = ESBData(
+            data=[
+                {
+                    "Read Date and End Time": (start + timedelta(minutes=30 * i)).strftime("%d-%m-%Y %H:%M"),
+                    "Read Value": "0.5",
+                    "Read Type": "Active Import Interval (kWh)",
+                }
+                for i in range(96)
+            ]
+        )
+        return sensor
+
+    async def _full_recost(self, sensor, previous_first, recorder_stub):
+        """Re-cost after a tariff change, with every costed hour already stored."""
+        state = self._state("stale", previous_first)
+        hourly = sensor._hourly(esb_data=sensor.coordinator.data)
+        recorder_stub.stored.return_value = {h for h, _ in hourly}
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state):
+            await sensor._async_import_statistics()
+        importer = recorder_stub.importer
+        return (importer.call_args.args[2] if importer.await_count else []), state
+
+    def test_statistics_are_external_and_named(self):
+        usage = self._sensor(UsageCostSensor, self.PERIOD)
+        export = self._sensor(ExportCreditSensor, self.PERIOD)
+        assert usage._statistic_id == "esb_smart_meter:usage_cost_12345678901"
+        assert usage._statistic_name == "ESB Smart Meter (12345678901) Usage cost"
+        assert export._statistic_id == "esb_smart_meter:export_credit_12345678901"
+        assert export._statistic_name == "ESB Smart Meter (12345678901) Export credit"
+
+    def test_entities_display_the_running_total(self):
+        sensor = self._sensor(UsageCostSensor, self.PERIOD)
+        assert sensor.unique_id == "12345678901_usage_cost_total"
+        assert sensor.translation_key == "usage_cost_total"
+        assert sensor.entity_id == "sensor.esb_electricity_usage_cost_total"
+        assert sensor.device_class == SensorDeviceClass.MONETARY
+        assert sensor.native_unit_of_measurement == "EUR"
+        assert sensor.state_class is None  # no auto-compiled statistics competing with the import
+        assert sensor.native_value is None
+        export = self._sensor(ExportCreditSensor, self.PERIOD)
+        assert export.unique_id == "12345678901_export_credit_total"
+        assert export.entity_id == "sensor.esb_electricity_export_credit_total"
+
+    @pytest.mark.asyncio
+    async def test_import_targets_external_statistic_and_updates_state(self, recorder_stub):
+        sensor = self._sensor(UsageCostSensor, self.PERIOD)
+        recorder_stub.importer.return_value = 12.5
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=self._state("stale", None)):
+            await sensor._async_import_statistics()
+
+        args, kwargs = recorder_stub.importer.call_args
+        assert args[1] == "esb_smart_meter:usage_cost_12345678901"
+        assert kwargs == {"unit": "EUR", "name": "ESB Smart Meter (12345678901) Usage cost"}
+        assert recorder_stub.stored.call_args.args[1] == "esb_smart_meter:usage_cost_12345678901"
+        assert sensor.native_value == 12.5
+        sensor.async_write_ha_state.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_first_hour_moved_later_zeroes_hours_no_longer_costed(self, recorder_stub):
+        later = TariffPeriod(effective_from=date(2026, 1, 11), day_rate=0.3, night_rate=0.3, peak_rate=0.3, standing_charge=0.0)
+        sensor = self._two_days_sensor(later)
+
+        series, state = await self._full_recost(sensor, self.OLDEST + timedelta(hours=2), recorder_stub)
+
+        new_first = datetime(2026, 1, 11, tzinfo=timezone.utc)
+        zeros = [row for row in series if row[0] < new_first]
+        assert [hour for hour, _ in zeros] == [self.OLDEST + timedelta(hours=h) for h in range(2, 24)]
+        assert all(value == 0.0 for _, value in zeros)
+        assert series[len(zeros)] == (new_first, pytest.approx(0.3))
+        assert series[-1][0] == self.NEWEST
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([later]), new_first)
+
+    @pytest.mark.asyncio
+    async def test_zeroing_starts_at_oldest_downloaded_hour(self, recorder_stub):
+        """Hours older than the download can't be rewritten."""
+        later = TariffPeriod(effective_from=date(2026, 1, 11), day_rate=0.3, night_rate=0.3, peak_rate=0.3, standing_charge=0.0)
+        sensor = self._two_days_sensor(later)
+
+        series, _state = await self._full_recost(sensor, datetime(2025, 6, 1, tzinfo=timezone.utc), recorder_stub)
+
+        assert series[0] == (self.OLDEST, 0.0)
+        assert len(series) == 48
+
+    @pytest.mark.asyncio
+    async def test_all_periods_removed_zeroes_previously_costed_range(self, recorder_stub):
+        sensor = self._two_days_sensor()
+
+        series, state = await self._full_recost(sensor, self.OLDEST + timedelta(hours=12), recorder_stub)
+
+        assert [hour for hour, _ in series] == [self.OLDEST + timedelta(hours=h) for h in range(12, 48)]
+        assert all(value == 0.0 for _, value in series)
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([]), None)
+
+    @pytest.mark.asyncio
+    async def test_first_hour_moved_earlier_adds_no_zero_rows(self, recorder_stub):
+        sensor = self._two_days_sensor(self.PERIOD)
+
+        series, state = await self._full_recost(sensor, self.OLDEST + timedelta(hours=24), recorder_stub)
+
+        assert series == usage_costs(sensor.coordinator.data.hourly_usage(), [self.PERIOD])
+        assert all(value > 0 for _, value in series)
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([self.PERIOD]), self.OLDEST)
+
+    @pytest.mark.asyncio
+    async def test_no_periods_and_nothing_costed_before_imports_nothing(self, recorder_stub):
+        sensor = self._two_days_sensor()
+
+        series, state = await self._full_recost(sensor, None, recorder_stub)
+
+        assert series == []
+        recorder_stub.committed.assert_not_awaited()
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([]), None)
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_saved_after_commit(self, recorder_stub):
+        """The fingerprint must not claim a re-cost the recorder hasn't committed."""
+        sensor = self._sensor(UsageCostSensor, self.PERIOD)
+        state = self._state("stale", None)
+        order = []
+        recorder_stub.committed.side_effect = lambda *_args: order.append("commit") or True
+        state.async_set_fingerprint.side_effect = lambda *a: order.append("fingerprint")
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state):
+            await sensor._async_import_statistics()
+
+        assert order == ["commit", "fingerprint"]
+        first_hour = sensor.coordinator.data.hourly_usage()[0][0]
+        state.async_set_fingerprint.assert_awaited_once_with(fingerprint([self.PERIOD]), first_hour)
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_not_saved_when_import_not_readable(self, recorder_stub):
+        """If the recorder never shows the re-cost, the next refresh must re-cost again."""
+        sensor = self._sensor(UsageCostSensor, self.PERIOD)
+        state = self._state("stale", None)
+        recorder_stub.committed.return_value = False
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state):
+            await sensor._async_import_statistics()
+
+        state.async_set_fingerprint.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cost_series_have_nothing_to_migrate(self, recorder_stub):
+        sensor = self._sensor(UsageCostSensor, self.PERIOD)
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=self._state("stale", None)):
+            await sensor._async_import_statistics()
+        recorder_stub.migrate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_tariffs_imports_nothing(self, recorder_stub):
+        sensor = self._sensor(UsageCostSensor)
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=self._state(None, None)):
+            await sensor._async_import_statistics()
+        recorder_stub.importer.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unchanged_tariffs_import_recent_only(self, recorder_stub):
+        sensor = self._sensor(ExportCreditSensor, self.PERIOD)
+        hourly = sensor._hourly(esb_data=sensor.coordinator.data)
+        recorder_stub.stored.return_value = {h for h, _ in hourly}
+        state = self._state(fingerprint([self.PERIOD]), None)
+        with patch("custom_components.esb_smart_meter.sensor.ImportState", return_value=state):
+            await sensor._async_import_statistics()
+
+        hours = recorder_stub.importer.call_args.args[2]
+        assert [round(v, 6) for _, v in hours] == [0.1]  # 0.5 kWh x EUR 0.20
+        state.async_set_fingerprint.assert_not_awaited()

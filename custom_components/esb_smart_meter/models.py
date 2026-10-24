@@ -12,7 +12,6 @@ from .const import (
     CSV_COLUMN_READ_TYPE,
     CSV_COLUMN_VALUE,
     CSV_DATE_FORMAT,
-    MAX_DATA_AGE_DAYS,
     READ_TYPE_EXPORT,
     READ_TYPE_IMPORT,
 )
@@ -27,7 +26,7 @@ class ESBData:
     """Class to manipulate data retrieved from ESB with memory optimization."""
 
     def __init__(self, *, data: List[Dict[str, Any]]) -> None:
-        """Initialize with raw CSV data, filtering old data to prevent memory leaks."""
+        """Initialize with raw CSV data."""
         # Validate CSV structure
         if data:
             if not self._validate_csv_structure(data[0]):
@@ -40,15 +39,9 @@ class ESBData:
                     f"{CSV_COLUMN_DATE}, {CSV_COLUMN_VALUE}, {CSV_COLUMN_READ_TYPE}"
                 )
 
-        # Filter out data older than MAX_DATA_AGE_DAYS to prevent memory leaks
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=MAX_DATA_AGE_DAYS)
-        self._data, self._export_data = self._filter_and_parse_data(data, cutoff_date)
-        _LOGGER.debug(
-            "Loaded %d import / %d export rows (filtered data older than %d days)",
-            len(self._data),
-            len(self._export_data),
-            MAX_DATA_AGE_DAYS,
-        )
+        # ESB returns a rolling ~2 years; keep it all for the statistics backfill
+        self._data, self._export_data = self._filter_and_parse_data(data)
+        _LOGGER.debug("Loaded %d import / %d export rows", len(self._data), len(self._export_data))
 
     @staticmethod
     def _validate_csv_structure(row: dict[str, Any]) -> bool:
@@ -63,9 +56,9 @@ class ESBData:
         return has_required
 
     def _filter_and_parse_data(
-        self, data: list[dict[str, Any]], cutoff_date: datetime
+        self, data: list[dict[str, Any]]
     ) -> tuple[list[tuple[datetime, float]], list[tuple[datetime, float]]]:
-        """Filter old data and split rows into import and export series."""
+        """Parse rows and split them into import and export series."""
         import_data: list[tuple[datetime, float]] = []
         export_data: list[tuple[datetime, float]] = []
         unknown_types: dict[str, int] = defaultdict(int)
@@ -122,7 +115,7 @@ class ESBData:
             prepared.append((label, value, series, kind))
 
         # Second pass: resolve admitted labels to UTC, refusing repeated labels
-        # that are not part of a supported pair, then apply the rolling cutoff.
+        # that are not part of a supported pair.
         seen_repeated: dict[tuple[str, datetime], int] = defaultdict(int)
         refused_repeated = 0
         for label, value, series, kind in prepared:
@@ -138,8 +131,6 @@ class ESBData:
                 timestamp = label.replace(tzinfo=DUBLIN_TZ, fold=fold).astimezone(timezone.utc)
             else:
                 timestamp = label.replace(tzinfo=DUBLIN_TZ).astimezone(timezone.utc)
-            if timestamp < cutoff_date:
-                continue
             if series == READ_TYPE_IMPORT:
                 import_data.append((timestamp, value))
             else:
@@ -250,7 +241,7 @@ class ESBData:
         """Aggregate 30-minute readings into hourly buckets, ascending.
 
         The first and last buckets are kept only once both of their interval-end
-        readings are present: the download (or rolling cutoff) starts and ends
+        readings are present: the download starts and ends
         mid-hour, and a lone half there would replace a complete stored hour with
         a lower sum, or publish a trailing half as a full hour. A bucket inside the
         series keeps what ESB sent: its gaps are permanent, so the missing half

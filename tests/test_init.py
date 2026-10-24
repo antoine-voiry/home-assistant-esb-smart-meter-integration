@@ -5,11 +5,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from homeassistant.exceptions import ConfigEntryNotReady
+
 from custom_components.esb_smart_meter import (
-    async_setup,
+    _async_reload_on_update,
+    async_remove_entry,
     async_setup_entry,
     async_unload_entry,
 )
+from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.const import (
     CONF_MPRN,
     CONF_PASSWORD,
@@ -17,36 +21,6 @@ from custom_components.esb_smart_meter.const import (
     CONF_USERNAME,
     DOMAIN,
 )
-
-
-class TestAsyncSetup:
-    """Test async_setup function."""
-
-    @pytest.mark.asyncio
-    async def test_async_setup_initializes_domain_data(self):
-        """Test that async_setup initializes domain data."""
-        hass = MagicMock()
-        hass.data = {}
-        config = {}
-
-        result = await async_setup(hass, config)
-
-        assert result is True
-        assert DOMAIN in hass.data
-        assert hass.data[DOMAIN] == {}
-
-    @pytest.mark.asyncio
-    async def test_async_setup_preserves_existing_data(self):
-        """Test that async_setup doesn't overwrite existing domain data."""
-        hass = MagicMock()
-        existing_data = {"existing": "data"}
-        hass.data = {DOMAIN: existing_data}
-        config = {}
-
-        result = await async_setup(hass, config)
-
-        assert result is True
-        assert hass.data[DOMAIN] == existing_data
 
 
 class TestAsyncSetupEntry:
@@ -100,10 +74,8 @@ class TestAsyncSetupEntry:
 
             # Assertions
             assert result is True
-            assert DOMAIN in mock_hass.data
-            assert mock_entry.entry_id in mock_hass.data[DOMAIN]
-            assert "coordinator" in mock_hass.data[DOMAIN][mock_entry.entry_id]
-            assert "session" in mock_hass.data[DOMAIN][mock_entry.entry_id]
+            assert isinstance(mock_entry.runtime_data, ESBRuntimeData)
+            assert DOMAIN not in mock_hass.data
 
             # Verify API client was created with correct parameters
             mock_api_class.assert_called_once_with(
@@ -173,9 +145,8 @@ class TestAsyncSetupEntry:
 
             await async_setup_entry(mock_hass, mock_entry)
 
-            stored_data = mock_hass.data[DOMAIN][mock_entry.entry_id]
-            assert stored_data["coordinator"] == mock_coordinator
-            assert stored_data["session"] == mock_session
+            assert mock_entry.runtime_data.coordinator == mock_coordinator
+            assert mock_entry.runtime_data.session == mock_session
 
     @pytest.mark.asyncio
     async def test_async_setup_entry_creates_session(self, mock_hass, mock_entry):
@@ -198,6 +169,83 @@ class TestAsyncSetupEntry:
 
             mock_create_session.assert_called_once_with(mock_hass)
 
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_closes_session_when_first_refresh_fails(self, mock_hass, mock_entry):
+        """A failed first refresh must not leak the aiohttp session on every setup retry."""
+        with patch(
+            "custom_components.esb_smart_meter.create_esb_session"
+        ) as mock_create_session, patch(
+            "custom_components.esb_smart_meter.ESBDataApi"
+        ), patch(
+            "custom_components.esb_smart_meter.ESBDataUpdateCoordinator"
+        ) as mock_coordinator_class:
+            mock_session = MagicMock()
+            mock_session.close = AsyncMock()
+            mock_create_session.return_value = mock_session
+            mock_coordinator = MagicMock()
+            mock_coordinator.async_config_entry_first_refresh = AsyncMock(side_effect=ConfigEntryNotReady("down"))
+            mock_coordinator_class.return_value = mock_coordinator
+
+            with pytest.raises(ConfigEntryNotReady):
+                await async_setup_entry(mock_hass, mock_entry)
+
+            mock_session.close.assert_awaited_once()
+            mock_hass.config_entries.async_forward_entry_setups.assert_not_called()
+
+    async def _set_up(self, mock_hass, mock_entry):
+        with patch("custom_components.esb_smart_meter.create_esb_session"), patch(
+            "custom_components.esb_smart_meter.ESBDataApi"
+        ), patch("custom_components.esb_smart_meter.ESBDataUpdateCoordinator") as mock_coordinator_class:
+            mock_coordinator_class.return_value.async_config_entry_first_refresh = AsyncMock()
+            await async_setup_entry(mock_hass, mock_entry)
+        mock_hass.config_entries.async_reload = AsyncMock()
+        return mock_coordinator_class.return_value
+
+    @pytest.mark.asyncio
+    async def test_async_setup_entry_registers_update_listener(self, mock_hass, mock_entry):
+        """Entry updates go through the update listener."""
+        await self._set_up(mock_hass, mock_entry)
+        mock_entry.add_update_listener.assert_called_once_with(_async_reload_on_update)
+
+    @pytest.mark.asyncio
+    async def test_options_change_reloads(self, mock_hass, mock_entry):
+        coordinator = await self._set_up(mock_hass, mock_entry)
+        mock_entry.options = {CONF_UPDATE_INTERVAL: 12}
+
+        await _async_reload_on_update(mock_hass, mock_entry)
+
+        mock_hass.config_entries.async_reload.assert_awaited_once_with(mock_entry.entry_id)
+        coordinator.async_update_listeners.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_data_change_reloads(self, mock_hass, mock_entry):
+        """A new password (reauth) changes entry.data and needs a fresh login."""
+        await self._set_up(mock_hass, mock_entry)
+        mock_entry.data = {**mock_entry.data, CONF_PASSWORD: "new"}
+
+        await _async_reload_on_update(mock_hass, mock_entry)
+
+        mock_hass.config_entries.async_reload.assert_awaited_once_with(mock_entry.entry_id)
+
+    @pytest.mark.asyncio
+    async def test_subentry_only_change_updates_sensors_without_reload(self, mock_hass, mock_entry):
+        """Tariff edits re-cost from the data in memory: no reload, no new download."""
+        coordinator = await self._set_up(mock_hass, mock_entry)
+
+        await _async_reload_on_update(mock_hass, mock_entry)
+
+        mock_hass.config_entries.async_reload.assert_not_awaited()
+        coordinator.async_update_listeners.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_runtime_data_without_snapshot_reloads(self, mock_hass, mock_entry):
+        mock_hass.config_entries.async_reload = AsyncMock()
+        mock_entry.runtime_data = ESBRuntimeData(coordinator=MagicMock(), session=MagicMock())
+
+        await _async_reload_on_update(mock_hass, mock_entry)
+
+        mock_hass.config_entries.async_reload.assert_awaited_once_with(mock_entry.entry_id)
+
 
 class TestAsyncUnloadEntry:
     """Test async_unload_entry function."""
@@ -206,148 +254,63 @@ class TestAsyncUnloadEntry:
     def mock_hass(self):
         """Create a mock Home Assistant instance."""
         hass = MagicMock()
-        hass.data = {DOMAIN: {}}
         hass.config_entries = MagicMock()
         hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
         return hass
 
-    @pytest.fixture
-    def mock_entry(self):
-        """Create a mock config entry."""
+    @staticmethod
+    def _entry(session):
         entry = MagicMock()
         entry.entry_id = "test_entry_id"
+        entry.runtime_data = ESBRuntimeData(coordinator=MagicMock(), session=session)
         return entry
 
+    @staticmethod
+    def _session(*, closed=False, close_error=None):
+        session = MagicMock()
+        session.closed = closed
+        session.close = AsyncMock(side_effect=close_error)
+        return session
+
     @pytest.mark.asyncio
-    async def test_async_unload_entry_success(self, mock_hass, mock_entry):
-        """Test successful unload of config entry."""
-        mock_session = MagicMock()
-        mock_session.closed = False
-        mock_session.close = AsyncMock()
+    async def test_async_unload_entry_success(self, mock_hass):
+        """Test successful unload closes the entry's session."""
+        session = self._session()
+        entry = self._entry(session)
 
-        mock_hass.data[DOMAIN][mock_entry.entry_id] = {
-            "coordinator": MagicMock(),
-            "session": mock_session,
-        }
-
-        result = await async_unload_entry(mock_hass, mock_entry)
+        result = await async_unload_entry(mock_hass, entry)
 
         assert result is True
-        mock_hass.config_entries.async_unload_platforms.assert_called_once_with(
-            mock_entry, ["sensor"]
-        )
-        mock_session.close.assert_called_once()
-        assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
+        mock_hass.config_entries.async_unload_platforms.assert_called_once_with(entry, ["sensor"])
+        session.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_async_unload_entry_no_session(self, mock_hass, mock_entry):
-        """Test unload when no session exists."""
-        mock_hass.data[DOMAIN][mock_entry.entry_id] = {
-            "coordinator": MagicMock(),
-        }
-
-        result = await async_unload_entry(mock_hass, mock_entry)
-
-        assert result is True
-        assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
-
-    @pytest.mark.asyncio
-    async def test_async_unload_entry_session_already_closed(self, mock_hass, mock_entry):
+    async def test_async_unload_entry_session_already_closed(self, mock_hass):
         """Test unload when session is already closed."""
-        mock_session = MagicMock()
-        mock_session.closed = True
-        mock_session.close = AsyncMock()
+        session = self._session(closed=True)
 
-        mock_hass.data[DOMAIN][mock_entry.entry_id] = {
-            "coordinator": MagicMock(),
-            "session": mock_session,
-        }
-
-        result = await async_unload_entry(mock_hass, mock_entry)
-
-        assert result is True
-        mock_session.close.assert_not_called()
-        assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
+        assert await async_unload_entry(mock_hass, self._entry(session)) is True
+        session.close.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_async_unload_entry_session_close_error(self, mock_hass, mock_entry):
+    async def test_async_unload_entry_session_close_error(self, mock_hass):
         """Test unload handles session close errors gracefully."""
-        mock_session = MagicMock()
-        mock_session.closed = False
-        mock_session.close = AsyncMock(side_effect=Exception("Close error"))
-
-        mock_hass.data[DOMAIN][mock_entry.entry_id] = {
-            "coordinator": MagicMock(),
-            "session": mock_session,
-        }
+        session = self._session(close_error=Exception("Close error"))
 
         with patch("custom_components.esb_smart_meter._LOGGER") as mock_logger:
-            result = await async_unload_entry(mock_hass, mock_entry)
-
-            assert result is True
-            mock_logger.warning.assert_called_once()
-            assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
-
-    @pytest.mark.asyncio
-    async def test_async_unload_entry_no_entry_data(self, mock_hass, mock_entry):
-        """Test unload when entry has no data."""
-        result = await async_unload_entry(mock_hass, mock_entry)
+            result = await async_unload_entry(mock_hass, self._entry(session))
 
         assert result is True
-        mock_hass.config_entries.async_unload_platforms.assert_called_once_with(
-            mock_entry, ["sensor"]
-        )
+        mock_logger.warning.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_async_unload_entry_unload_fails(self, mock_hass, mock_entry):
-        """Test unload when platform unload fails."""
+    async def test_async_unload_entry_unload_fails(self, mock_hass):
+        """Session stays open if the platforms fail to unload."""
         mock_hass.config_entries.async_unload_platforms = AsyncMock(return_value=False)
+        session = self._session()
 
-        mock_session = MagicMock()
-        mock_session.closed = False
-        mock_session.close = AsyncMock()
-
-        mock_hass.data[DOMAIN][mock_entry.entry_id] = {
-            "coordinator": MagicMock(),
-            "session": mock_session,
-        }
-
-        result = await async_unload_entry(mock_hass, mock_entry)
-
-        assert result is False
-        # Session should not be closed if unload fails
-        mock_session.close.assert_not_called()
-        # Entry data should still exist
-        assert mock_entry.entry_id in mock_hass.data[DOMAIN]
-
-    @pytest.mark.asyncio
-    async def test_async_unload_entry_empty_entry_data(self, mock_hass, mock_entry):
-        """Test unload with empty entry data dictionary."""
-        mock_hass.data[DOMAIN][mock_entry.entry_id] = {}
-
-        result = await async_unload_entry(mock_hass, mock_entry)
-
-        assert result is True
-        assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
-
-    @pytest.mark.asyncio
-    async def test_async_unload_entry_preserves_other_entries(self, mock_hass, mock_entry):
-        """Test that unload doesn't affect other entries."""
-        other_entry_id = "other_entry_id"
-        other_entry_data = {"coordinator": MagicMock(), "session": MagicMock()}
-
-        mock_hass.data[DOMAIN][mock_entry.entry_id] = {
-            "coordinator": MagicMock(),
-            "session": MagicMock(),
-        }
-        mock_hass.data[DOMAIN][other_entry_id] = other_entry_data
-
-        result = await async_unload_entry(mock_hass, mock_entry)
-
-        assert result is True
-        assert mock_entry.entry_id not in mock_hass.data[DOMAIN]
-        assert other_entry_id in mock_hass.data[DOMAIN]
-        assert mock_hass.data[DOMAIN][other_entry_id] == other_entry_data
+        assert await async_unload_entry(mock_hass, self._entry(session)) is False
+        session.close.assert_not_called()
 
 
 class TestIntegrationSetup:
@@ -399,9 +362,33 @@ class TestIntegrationSetup:
 
             assert result1 is True
             assert result2 is True
-            assert "entry1" in hass.data[DOMAIN]
-            assert "entry2" in hass.data[DOMAIN]
-            assert hass.data[DOMAIN]["entry1"]["session"] == mock_session1
-            assert hass.data[DOMAIN]["entry2"]["session"] == mock_session2
-            assert hass.data[DOMAIN]["entry1"]["coordinator"] == mock_coordinator1
-            assert hass.data[DOMAIN]["entry2"]["coordinator"] == mock_coordinator2
+            assert entry1.runtime_data.session == mock_session1
+            assert entry2.runtime_data.session == mock_session2
+            assert entry1.runtime_data.coordinator == mock_coordinator1
+            assert entry2.runtime_data.coordinator == mock_coordinator2
+
+
+@pytest.mark.asyncio
+async def test_remove_entry_deletes_import_state():
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "entry1"
+    with patch("custom_components.esb_smart_meter.ImportState") as state_cls:
+        state_cls.return_value.async_remove = AsyncMock()
+        await async_remove_entry(hass, entry)
+
+    assert [c.args for c in state_cls.call_args_list] == [(hass, "entry1", "usage_cost"), (hass, "entry1", "export_credit")]
+
+
+@pytest.mark.asyncio
+async def test_remove_entry_clears_energy_issue():
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "entry1"
+    with patch("custom_components.esb_smart_meter.ImportState") as state_cls, patch(
+        "custom_components.esb_smart_meter.async_remove_energy_issue"
+    ) as remove_issue:
+        state_cls.return_value.async_remove = AsyncMock()
+        await async_remove_entry(hass, entry)
+
+    remove_issue.assert_called_once_with(hass, "entry1")

@@ -15,8 +15,8 @@ DEFAULT_SCAN_INTERVAL = timedelta(hours=24)  # Retry next day if all attempts fa
 DEFAULT_TIMEOUT = 30
 DEFAULT_MAX_RETRIES = 3  # Max 3 authentication attempts per day (reduced for stealth)
 DEFAULT_RETRY_WAIT = 1800  # Wait 30 minutes (1800 seconds) between retries
+RECENT_IMPORT_DAYS = 7  # Daily statistics import window; ESB only fills in the last day or two
 MAX_CSV_SIZE_MB = 10  # Maximum CSV response size in MB
-MAX_DATA_AGE_DAYS = 90  # Maximum age of data to keep in memory
 
 # Stealth and timing constants
 STARTUP_DELAY_MIN = 300  # Minimum delay after HA boot (5 minutes)
@@ -46,6 +46,21 @@ CAPTCHA_NOTIFICATION_ID = "esb_smart_meter_captcha"
 CAPTCHA_COOLDOWN_HOURS = 24  # Don't spam notifications
 CONF_MANUAL_COOKIES = "manual_cookies"  # Config key for manual cookie input
 CONF_SESSION_COOKIES = "session_cookies"  # Config key for stored session cookies
+
+# Tariff periods (config subentries); values match TariffPeriod field names
+SUBENTRY_TARIFF = "tariff"
+CONF_PRESET = "preset"
+CONF_EFFECTIVE_FROM = "effective_from"
+CONF_DAY_RATE = "day_rate"
+CONF_NIGHT_RATE = "night_rate"
+CONF_PEAK_RATE = "peak_rate"
+CONF_STANDING_CHARGE = "standing_charge"
+CONF_EXPORT_RATE = "export_rate"
+CONF_NIGHT_START = "night_start"
+CONF_NIGHT_END = "night_end"
+CONF_PEAK_START = "peak_start"
+CONF_PEAK_END = "peak_end"
+CONF_PEAK_WEEKDAYS_ONLY = "peak_weekdays_only"
 
 # Circuit breaker settings
 CIRCUIT_BREAKER_FAILURES = 3  # Open circuit after N failures

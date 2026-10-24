@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
 import pytest
 
@@ -50,8 +49,8 @@ class TestESBData:
         """Test ESBData initialization."""
         esb_data = ESBData(data=sample_data)
         assert esb_data is not None
-        # Should filter out data older than 90 days
-        assert len(esb_data._data) <= 90
+        # Every downloaded import row is kept (no age cutoff)
+        assert len(esb_data._data) == 100
 
     def test_esb_data_today(self):
         """Test today's data calculation."""
@@ -183,13 +182,13 @@ class TestESBData:
         assert esb_data.today == 0.0
         assert esb_data.last_24_hours == 0.0
 
-    def test_esb_data_filters_old_data(self):
-        """Test that data older than MAX_DATA_AGE_DAYS is filtered."""
+    def test_esb_data_keeps_full_download(self):
+        """ESB returns a rolling ~2 years; every row is kept for statistics."""
         now = _dublin_now()
 
         data = [
             {
-                "Read Date and End Time": (now - timedelta(days=95)).strftime("%d-%m-%Y %H:%M"),
+                "Read Date and End Time": (now - timedelta(days=700)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "1.0",
                 "Read Type": "Active Import Interval (kWh)",
             },
@@ -201,8 +200,8 @@ class TestESBData:
         ]
 
         esb_data = ESBData(data=data)
-        # Only data within 90 days should be kept
-        assert len(esb_data._data) == 1
+        assert len(esb_data._data) == 2
+        assert esb_data.last_30_days == 0.0  # period sensors still select by window
 
     def test_esb_data_handles_invalid_rows(self):
         """Test that invalid rows are skipped gracefully."""
@@ -379,8 +378,7 @@ class TestESBData:
             ("26-10-2025 00:30", "0.1"),
         ]
         rows = [{"Read Date and End Time": d, "Read Value": v, "Read Type": rt} for d, v in labels_newest_first]
-        with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
-            esb = ESBData(data=rows)
+        esb = ESBData(data=rows)
 
         utc = timezone.utc
         assert esb.hourly_usage() == [
@@ -400,8 +398,7 @@ class TestESBData:
             ("29-03-2025 23:30", "0.05"),
         ]
         rows = [{"Read Date and End Time": d, "Read Value": v, "Read Type": rt} for d, v in labels_newest_first]
-        with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
-            esb = ESBData(data=rows)
+        esb = ESBData(data=rows)
 
         utc = timezone.utc
         assert esb.hourly_usage() == [
@@ -489,8 +486,7 @@ def test_nonexistent_spring_labels_are_refused(direction):
          "Read Type": f"Active {direction} Interval (kWh)"}
         for label, value in [("02:00", "0.3"), ("01:30", "9"), ("01:00", "9"), ("00:30", "0.2")]
     ]
-    with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
-        esb = ESBData(data=rows)
+    esb = ESBData(data=rows)
     series = esb._data if direction == "Import" else esb._export_data
     assert series == [(datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc), 0.2),
                       (datetime(2026, 3, 29, 1, 0, tzinfo=timezone.utc), 0.3)]
@@ -511,8 +507,7 @@ def test_autumn_groups_require_two_valid_values_per_direction(direction, values)
         for kind, readings in [(direction, values), (other, ["0.4", "0.6"])]
         for value in readings
     ]
-    with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
-        esb = ESBData(data=rows)
+    esb = ESBData(data=rows)
     series, control = (esb._data, esb._export_data) if direction == "Import" else (esb._export_data, esb._data)
     times = [datetime(2026, 10, 25, hour, 30, tzinfo=timezone.utc) for hour in (0, 1)]
     assert series == (list(zip(times, [1.0, 2.0])) if values == ["1", "2"] else [])
@@ -530,8 +525,7 @@ def test_only_edge_hours_need_both_halves():
         ("10-01-2026 03:30", "0.7"),  # trailing edge, incomplete
     ]
     rows = [{"Read Date and End Time": d, "Read Value": v, "Read Type": rt} for d, v in reversed(labels)]
-    with patch("custom_components.esb_smart_meter.models.MAX_DATA_AGE_DAYS", 100000):
-        esb = ESBData(data=rows)
+    esb = ESBData(data=rows)
 
     utc = timezone.utc
     assert esb.hourly_usage() == [
