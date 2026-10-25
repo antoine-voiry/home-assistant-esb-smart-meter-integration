@@ -10,7 +10,7 @@ on:
 
 jobs:
   validate-hassfest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Validate with hassfest
     steps:
       - name: Checkout code
@@ -20,7 +20,7 @@ jobs:
         uses: home-assistant/actions/hassfest@master
 
   validate-hacs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Validate with HACS
     steps:
       - name: Checkout code
@@ -32,7 +32,7 @@ jobs:
           category: integration
 
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Run tests
     steps:
       - name: Checkout code
