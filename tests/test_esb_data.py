@@ -56,6 +56,7 @@ class TestESBData:
         """Test today's data calculation."""
         now = _dublin_now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # 00:00 and 03:00 are never ambiguous; 01:00 repeats on the October clock change
 
         data = [
             {
@@ -64,7 +65,7 @@ class TestESBData:
                 "Read Type": "Active Import Interval (kWh)",
             },
             {
-                "Read Date and End Time": (today_start + timedelta(hours=1)).strftime("%d-%m-%Y %H:%M"),
+                "Read Date and End Time": (today_start + timedelta(hours=3)).strftime("%d-%m-%Y %H:%M"),
                 "Read Value": "3.0",
                 "Read Type": "Active Import Interval (kWh)",
             },

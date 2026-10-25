@@ -2,6 +2,7 @@
   "domain": "esb_smart_meter",
   "name": "ESB Smart Meter",
   "after_dependencies": ["energy"],
+  "categories": ["energy.meters_monitoring"],
   "codeowners": ["@antoine-voiry"],
   "config_flow": true,
   "dependencies": ["recorder"],

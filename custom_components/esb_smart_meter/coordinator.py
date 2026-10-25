@@ -31,7 +31,8 @@ class ESBRuntimeData:
     settings: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
-type ESBConfigEntry = ConfigEntry[ESBRuntimeData]
+# A plain alias rather than a `type` statement: CodeQL's Python extractor misreads PEP 695 aliases
+ESBConfigEntry = ConfigEntry[ESBRuntimeData]
 
 
 class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
