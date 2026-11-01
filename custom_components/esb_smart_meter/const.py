@@ -45,6 +45,9 @@ SESSION_VALIDATION_ENDPOINTS = [
 CAPTCHA_NOTIFICATION_ID = "esb_smart_meter_captcha"
 CAPTCHA_COOLDOWN_HOURS = 24  # Don't spam notifications
 CONF_MANUAL_COOKIES = "manual_cookies"  # Config key for manual cookie input
+CONF_MANUAL_USER_AGENT = "manual_user_agent"  # Browser User-Agent the cookies were issued to
+SESSION_SOURCE_LOGIN = "login"  # Session produced by the integration's own login
+SESSION_SOURCE_MANUAL = "manual"  # Session pasted by the user from their browser
 CONF_SESSION_COOKIES = "session_cookies"  # Config key for stored session cookies
 
 # Tariff periods (config subentries); values match TariffPeriod field names
@@ -79,9 +82,10 @@ MPRN_LENGTH = 11  # Expected length of MPRN
 ESB_LOGIN_URL = "https://myaccount.esbnetworks.ie/"
 ESB_AUTH_BASE_URL = "https://login.esbnetworks.ie/esbntwkscustportalprdb2c01.onmicrosoft.com" "/B2C_1A_signup_signin"
 ESB_MYACCOUNT_URL = "https://myaccount.esbnetworks.ie"
-ESB_CONSUMPTION_URL = "https://myaccount.esbnetworks.ie/Api/HistoricConsumption"
+# Moved by ESB by 2026-11-01 (the old /Api/HistoricConsumption and /DataHub/... answer 404 when logged in)
+ESB_CONSUMPTION_URL = "https://myaccount.esbnetworks.ie/energymanagement/historic-consumption"
 ESB_TOKEN_URL = "https://myaccount.esbnetworks.ie/af/t"
-ESB_DOWNLOAD_URL = "https://myaccount.esbnetworks.ie/DataHub/DownloadHdfPeriodic"
+ESB_DOWNLOAD_URL = "https://myaccount.esbnetworks.ie/energymanagement/api/consumption/DownloadHdfPeriodic"
 
 # CSV columns expected from ESB
 CSV_COLUMN_DATE = "Read Date and End Time"

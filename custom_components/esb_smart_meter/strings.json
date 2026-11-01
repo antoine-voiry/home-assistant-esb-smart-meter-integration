@@ -57,10 +57,12 @@
         "title": "Manual Cookie Input",
         "description": "If ESB Networks is showing CAPTCHA, you can provide session cookies manually:\n\n{cookie_instructions}",
         "data": {
-          "manual_cookies": "Cookie String"
+          "manual_cookies": "Cookie request header",
+          "manual_user_agent": "Browser User-Agent"
         },
         "data_description": {
-          "manual_cookies": "Paste the entire cookie string from your browser"
+          "manual_cookies": "The whole Cookie request header from the browser's Network tab (not document.cookie)",
+          "manual_user_agent": "The User-Agent request header from the same request. Optional, but the session is replayed with it"
         }
       }
     },
