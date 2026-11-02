@@ -455,6 +455,12 @@ Usage one:
 | Standing charge | `… Standing charge (0 kWh)` | `… Standing charge` |
 
 The dashboard then colours the hourly bars by band and lists kWh and € per band in its totals.
+
+| A week | One day (hourly) |
+|---|---|
+| ![Energy dashboard: a week split into EV window, night, day and peak, with kWh and cost per band](docs/images/band-breakdown-week.png) | ![Energy dashboard: one day's hourly bars coloured by tariff band](docs/images/band-breakdown-day.png) |
+
+*Example data, with the colour theme below.*
 The standing charge has a zero-kWh energy statistic only because the dashboard lists a grid
 connection only when it has one. The entities behind these statistics are hidden by default.
 
