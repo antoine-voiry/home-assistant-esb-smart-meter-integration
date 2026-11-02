@@ -437,6 +437,27 @@ the costs they had.
 Hourly cost = kWh × band rate + standing charge ÷ 24. The PSO levy isn't included.
 Export credit = exported kWh × export rate.
 
+#### Usage and cost by tariff band
+
+The integration also splits usage and cost by the band each hour is billed in: **Day**, **Night**,
+**Peak** and **EV / boost**, plus the **Standing charge** on its own. Together they add up exactly to
+the Usage and Usage cost statistics. A flat (24-hour) tariff period counts entirely as Day.
+
+To see the split on the Energy dashboard, add one grid connection per band in place of the single
+Usage one:
+
+| Grid connection | Energy statistic | Cost statistic |
+|---|---|---|
+| Day | `… Usage Day` | `… Usage cost Day` |
+| Night | `… Usage Night` | `… Usage cost Night` |
+| Peak | `… Usage Peak` | `… Usage cost Peak` |
+| EV / boost | `… Usage EV / boost` | `… Usage cost EV / boost` |
+| Standing charge | `… Standing charge (0 kWh)` | `… Standing charge` |
+
+The dashboard then colours the hourly bars by band and lists kWh and € per band in its totals.
+The standing charge has a zero-kWh energy statistic only because the dashboard lists a grid
+connection only when it has one. The entities behind these statistics are hidden by default.
+
 ### Energy Dashboard Integration
 
 The integration imports your readings into Home Assistant's long-term statistics

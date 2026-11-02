@@ -140,6 +140,36 @@
       },
       "circuit_breaker_status": {
         "name": "Circuit breaker status"
+      },
+      "usage_day_total": {
+        "name": "Day usage total"
+      },
+      "usage_night_total": {
+        "name": "Night usage total"
+      },
+      "usage_peak_total": {
+        "name": "Peak usage total"
+      },
+      "usage_boost_total": {
+        "name": "EV / boost usage total"
+      },
+      "usage_cost_day_total": {
+        "name": "Day cost total"
+      },
+      "usage_cost_night_total": {
+        "name": "Night cost total"
+      },
+      "usage_cost_peak_total": {
+        "name": "Peak cost total"
+      },
+      "usage_cost_boost_total": {
+        "name": "EV / boost cost total"
+      },
+      "standing_charge_total": {
+        "name": "Standing charge total"
+      },
+      "standing_charge_energy_total": {
+        "name": "Standing charge energy (always 0)"
       }
     }
   },
