@@ -17,6 +17,9 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_BOOST_END,
+    CONF_BOOST_RATE,
+    CONF_BOOST_START,
     CONF_DAY_RATE,
     CONF_EFFECTIVE_FROM,
     CONF_EXPORT_RATE,
@@ -83,6 +86,9 @@ PERIOD_SCHEMA = vol.Schema(
         vol.Required(CONF_PEAK_START): _HOUR,
         vol.Required(CONF_PEAK_END): _HOUR,
         vol.Required(CONF_PEAK_WEEKDAYS_ONLY): BooleanSelector(),
+        vol.Optional(CONF_BOOST_RATE): _RATE,
+        vol.Optional(CONF_BOOST_START, default=2): _HOUR,
+        vol.Optional(CONF_BOOST_END, default=5): _HOUR,
     }
 )
 

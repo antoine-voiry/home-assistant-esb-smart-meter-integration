@@ -172,12 +172,17 @@
             "night_end": "Night ends (hour)",
             "peak_start": "Peak starts (hour)",
             "peak_end": "Peak ends (hour)",
-            "peak_weekdays_only": "Peak on weekdays only"
+            "peak_weekdays_only": "Peak on weekdays only",
+            "boost_rate": "EV / boost rate",
+            "boost_start": "EV / boost starts (hour)",
+            "boost_end": "EV / boost ends (hour)"
           },
           "data_description": {
             "export_rate": "Leave at 0 if you don't export or aren't paid for export",
             "night_end": "First hour that is no longer night, e.g. 8 for 23:00–08:00",
-            "peak_end": "First hour that is no longer peak, e.g. 19 for 17:00–19:00"
+            "peak_end": "First hour that is no longer peak, e.g. 19 for 17:00–19:00",
+            "boost_rate": "Optional. A cheaper window every day, e.g. an EV night rate 02:00–05:00. It takes precedence over the night rate. Leave empty if your plan has none",
+            "boost_end": "First hour that is no longer in the window, e.g. 5 for 02:00–05:00"
           }
         },
         "reconfigure": {
@@ -193,14 +198,18 @@
             "night_end": "Night ends (hour)",
             "peak_start": "Peak starts (hour)",
             "peak_end": "Peak ends (hour)",
-            "peak_weekdays_only": "Peak on weekdays only"
+            "peak_weekdays_only": "Peak on weekdays only",
+            "boost_rate": "EV / boost rate",
+            "boost_start": "EV / boost starts (hour)",
+            "boost_end": "EV / boost ends (hour)"
           }
         }
       },
       "error": {
         "duplicate_period": "Another tariff period already starts on this date",
         "empty_band": "Start and end hour must be different",
-        "peak_overlaps_night": "Peak hours must not overlap night hours"
+        "peak_overlaps_night": "Peak hours must not overlap night hours",
+        "boost_overlaps_peak": "EV / boost hours must not overlap peak hours"
       },
       "abort": {
         "reconfigure_successful": "Tariff period updated"
