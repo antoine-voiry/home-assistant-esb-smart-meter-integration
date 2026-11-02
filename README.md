@@ -458,6 +458,23 @@ The dashboard then colours the hourly bars by band and lists kWh and € per ban
 The standing charge has a zero-kWh energy statistic only because the dashboard lists a grid
 connection only when it has one. The entities behind these statistics are hidden by default.
 
+The dashboard colours the grid connections as shades of one colour, which are hard to tell apart.
+A theme can give each one its own colour, by its position in the Energy settings (0 = first).
+For example, the colours of ESB Networks' own consumption chart, plus purple for an EV window:
+
+```yaml
+# configuration.yaml: frontend: themes: !include_dir_merge_named themes
+# themes/esb_energy.yaml, then pick the theme in your profile (or run frontend.set_theme)
+ESB Energy:
+  energy-grid-consumption-color-0: "#7a007a"   # EV / boost
+  energy-grid-consumption-color-1: "#001a4d"   # Night
+  energy-grid-consumption-color-2: "#003f91"   # Day
+  energy-grid-consumption-color-3: "#bb0000"   # Peak
+  energy-grid-consumption-color-4: "#9e9e9e"   # Standing charge
+```
+
+The bars are filled at half opacity, so these are deeper than the colours you will see.
+
 ### Energy Dashboard Integration
 
 The integration imports your readings into Home Assistant's long-term statistics

@@ -410,3 +410,34 @@ async def test_band_breakdown_adds_up_to_usage_and_cost(recorder_mock, hass, ena
     assert last(f"esb_smart_meter:usage_boost_{MPRN}") > 0 and last(f"esb_smart_meter:usage_peak_{MPRN}") > 0
     assert set(sums[f"esb_smart_meter:standing_charge_energy_{MPRN}"]) == {0.0}
 
+
+@pytest.mark.asyncio
+async def test_band_breakdown_is_recosted_after_tariff_change(recorder_mock, hass, enable_custom_integrations, session):
+    tariff = {**TARIFF, "night_rate": 0.20, "peak_rate": 0.40, "boost_rate": 0.10, "boost_start": 2, "boost_end": 5}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MPRN,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+        subentries_data=[ConfigSubentryData(data=tariff, subentry_type="tariff", title="t", unique_id="2020-01-01")],
+    )
+    entry.add_to_hass(hass)
+    fetch = AsyncMock(return_value=_ten_days_of_usage())
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        boost_kwh = (await _sums(hass, f"esb_smart_meter:usage_boost_{MPRN}"))[-1]
+        peak_kwh = (await _sums(hass, f"esb_smart_meter:usage_peak_{MPRN}"))[-1]
+        assert (await _sums(hass, f"esb_smart_meter:usage_cost_boost_{MPRN}"))[-1] == pytest.approx(boost_kwh * 0.10)
+
+        subentry = next(iter(entry.subentries.values()))
+        hass.config_entries.async_update_subentry(entry, subentry, data={**tariff, "boost_rate": 0.05, "peak_end": 20})
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+        # rate change re-costs the band's history; band change moves kWh between bands
+        assert (await _sums(hass, f"esb_smart_meter:usage_cost_boost_{MPRN}"))[-1] == pytest.approx(boost_kwh * 0.05)
+        assert (await _sums(hass, f"esb_smart_meter:usage_boost_{MPRN}"))[-1] == pytest.approx(boost_kwh)
+        assert (await _sums(hass, f"esb_smart_meter:usage_peak_{MPRN}"))[-1] > peak_kwh
+        bands = [(await _sums(hass, f"esb_smart_meter:usage_{b}_{MPRN}"))[-1] for b in ("day", "night", "peak", "boost")]
+        assert sum(bands) == pytest.approx((await _sums(hass, USAGE_ID))[-1])
+        fetch.assert_awaited_once()  # no re-download
+
