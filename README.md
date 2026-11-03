@@ -474,7 +474,7 @@ For example, the colours of ESB Networks' own consumption chart, plus purple for
 ESB Energy:
   energy-grid-consumption-color-0: "#7a007a"   # EV / boost
   energy-grid-consumption-color-1: "#001a4d"   # Night
-  energy-grid-consumption-color-2: "#003f91"   # Day
+  energy-grid-consumption-color-2: "#1a8cff"   # Day
   energy-grid-consumption-color-3: "#bb0000"   # Peak
   energy-grid-consumption-color-4: "#9e9e9e"   # Standing charge
 ```
