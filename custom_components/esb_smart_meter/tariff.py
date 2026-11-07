@@ -30,6 +30,9 @@ from .models import DUBLIN_TZ
 
 Hourly = list[tuple[datetime, float]]
 
+# Rate bands an hour can fall in, as named by TariffPeriod.band_at
+BANDS = ("day", "night", "peak", "boost")
+
 
 def _in_band(hour: int, start: int, end: int) -> bool:
     """Start inclusive, end exclusive; a band with start > end wraps midnight."""
@@ -92,15 +95,22 @@ class TariffPeriod:
                 del data[key]
         return data
 
+    def band_at(self, local: datetime) -> str:
+        """Return the band ("day", "night", "peak" or "boost") an Irish local time is billed in."""
+        if self.boost_rate is not None and _in_band(local.hour, self.boost_start, self.boost_end):
+            return "boost"
+        if self.day_rate == self.night_rate == self.peak_rate:
+            return "day"  # a flat (24-hour) tariff has no real night or peak, whatever hours it lists
+        if self._peak_applies_on(local) and _in_band(local.hour, self.peak_start, self.peak_end):
+            return "peak"
+        if _in_band(local.hour, self.night_start, self.night_end):
+            return "night"
+        return "day"
+
     def rate_at(self, local: datetime) -> float:
         """Return the €/kWh import rate for an Irish local time."""
-        if self.boost_rate is not None and _in_band(local.hour, self.boost_start, self.boost_end):
-            return self.boost_rate
-        if self._peak_applies_on(local) and _in_band(local.hour, self.peak_start, self.peak_end):
-            return self.peak_rate
-        if _in_band(local.hour, self.night_start, self.night_end):
-            return self.night_rate
-        return self.day_rate
+        rate = getattr(self, f"{self.band_at(local)}_rate")
+        return float(rate)
 
     def _peak_applies_on(self, local: datetime) -> bool:
         """Return False at weekends for a weekday-only peak."""
@@ -132,21 +142,48 @@ def _period_for(periods: list[TariffPeriod], day: date) -> TariffPeriod | None:
     return current
 
 
-def usage_costs(hourly_usage: Hourly, periods: list[TariffPeriod]) -> Hourly:
-    """Cost every hour from the first costed hour to the newest: kWh × rate + standing charge / 24."""
+def _costed_hours(hourly_usage: Hourly, periods: list[TariffPeriod]):
+    """Yield (hour, local time, period, kWh) for every hour from the first costed hour to the newest."""
     if not hourly_usage or not periods:
-        return []
+        return
     usage = dict(hourly_usage)
     first_start = datetime.combine(periods[0].effective_from, time(), DUBLIN_TZ).astimezone(timezone.utc)
     hour = max(hourly_usage[0][0], first_start)
-    costs: Hourly = []
     while hour <= hourly_usage[-1][0]:
         local = hour.astimezone(DUBLIN_TZ)
         period = _period_for(periods, local.date())
         if period is not None:
-            costs.append((hour, usage.get(hour, 0.0) * period.rate_at(local) + period.standing_charge / 24))
+            yield hour, local, period, usage.get(hour, 0.0)
         hour += timedelta(hours=1)
-    return costs
+
+
+def usage_costs(hourly_usage: Hourly, periods: list[TariffPeriod]) -> Hourly:
+    """Cost every hour from the first costed hour to the newest: kWh × rate + standing charge / 24."""
+    return [
+        (hour, kwh * period.rate_at(local) + period.standing_charge / 24)
+        for hour, local, period, kwh in _costed_hours(hourly_usage, periods)
+    ]
+
+
+def band_usage(hourly_usage: Hourly, periods: list[TariffPeriod], band: str) -> Hourly:
+    """The kWh of each costed hour billed in `band` (0 for hours in other bands)."""
+    return [
+        (hour, kwh if period.band_at(local) == band else 0.0)
+        for hour, local, period, kwh in _costed_hours(hourly_usage, periods)
+    ]
+
+
+def band_costs(hourly_usage: Hourly, periods: list[TariffPeriod], band: str) -> Hourly:
+    """The energy cost (no standing charge) of each costed hour billed in `band`."""
+    return [
+        (hour, kwh * period.rate_at(local) if period.band_at(local) == band else 0.0)
+        for hour, local, period, kwh in _costed_hours(hourly_usage, periods)
+    ]
+
+
+def standing_charges(hourly_usage: Hourly, periods: list[TariffPeriod]) -> Hourly:
+    """The standing charge of each costed hour; with the band costs it adds up to usage_costs."""
+    return [(hour, period.standing_charge / 24) for hour, _, period, _ in _costed_hours(hourly_usage, periods)]
 
 
 def export_credits(hourly_export: Hourly, periods: list[TariffPeriod]) -> Hourly:

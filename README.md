@@ -438,6 +438,50 @@ the costs they had.
 Hourly cost = kWh × band rate + standing charge ÷ 24. The PSO levy isn't included.
 Export credit = exported kWh × export rate.
 
+#### Usage and cost by tariff band
+
+The integration also splits usage and cost by the band each hour is billed in: **Day**, **Night**,
+**Peak** and **EV / boost**, plus the **Standing charge** on its own. Together they add up exactly to
+the Usage and Usage cost statistics. A flat (24-hour) tariff period counts entirely as Day.
+
+To see the split on the Energy dashboard, add one grid connection per band in place of the single
+Usage one:
+
+| Grid connection | Energy statistic | Cost statistic |
+|---|---|---|
+| Day | `… Usage Day` | `… Usage cost Day` |
+| Night | `… Usage Night` | `… Usage cost Night` |
+| Peak | `… Usage Peak` | `… Usage cost Peak` |
+| EV / boost | `… Usage EV / boost` | `… Usage cost EV / boost` |
+| Standing charge | `… Standing charge (0 kWh)` | `… Standing charge` |
+
+The dashboard then colours the hourly bars by band and lists kWh and € per band in its totals.
+
+| A week | One day (hourly) |
+|---|---|
+| ![Energy dashboard: a week split into EV window, night, day and peak, with kWh and cost per band](docs/images/band-breakdown-week.png) | ![Energy dashboard: one day's hourly bars coloured by tariff band](docs/images/band-breakdown-day.png) |
+
+*Example data, with the colour theme below.*
+The standing charge has a zero-kWh energy statistic only because the dashboard lists a grid
+connection only when it has one. The entities behind these statistics are hidden by default.
+
+The dashboard colours the grid connections as shades of one colour, which are hard to tell apart.
+A theme can give each one its own colour, by its position in the Energy settings (0 = first).
+For example, the colours of ESB Networks' own consumption chart, plus purple for an EV window:
+
+```yaml
+# configuration.yaml: frontend: themes: !include_dir_merge_named themes
+# themes/esb_energy.yaml, then pick the theme in your profile (or run frontend.set_theme)
+ESB Energy:
+  energy-grid-consumption-color-0: "#7a007a"   # EV / boost
+  energy-grid-consumption-color-1: "#001a4d"   # Night
+  energy-grid-consumption-color-2: "#1a8cff"   # Day
+  energy-grid-consumption-color-3: "#bb0000"   # Peak
+  energy-grid-consumption-color-4: "#9e9e9e"   # Standing charge
+```
+
+The bars are filled at half opacity, so these are deeper than the colours you will see.
+
 ### Energy Dashboard Integration
 
 The integration imports your readings into Home Assistant's long-term statistics

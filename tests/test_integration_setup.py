@@ -68,7 +68,7 @@ async def test_setup_names_entities_and_unloads(recorder_mock, hass, enable_cust
 
     registry = er.async_get(hass)
     entities = {e.unique_id: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
-    assert len(entities) == 20
+    assert len(entities) == 30
 
     today = entities[f"{MPRN}_today"]
     # New installs get the same documented entity ids existing installs already have
@@ -371,3 +371,75 @@ async def test_setup_flags_energy_dashboard_using_esb_entities(
     issue = ir.async_get(hass).async_get_issue(DOMAIN, f"energy_dashboard_entities_{entry.entry_id}")
     assert issue is not None
     assert issue.translation_placeholders["entities"] == "sensor.esb_electricity_usage_last_7_days"
+
+
+@pytest.mark.asyncio
+async def test_band_breakdown_adds_up_to_usage_and_cost(recorder_mock, hass, enable_custom_integrations, session):
+    tariff = {
+        **TARIFF, "day_rate": 0.30, "night_rate": 0.20, "peak_rate": 0.40, "standing_charge": 0.72,
+        "boost_rate": 0.10, "boost_start": 2, "boost_end": 5,
+    }
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MPRN,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+        subentries_data=[ConfigSubentryData(data=tariff, subentry_type="tariff", title="t", unique_id="2020-01-01")],
+    )
+    entry.add_to_hass(hass)
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", AsyncMock(return_value=_ten_days_of_usage())):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    def last(statistic_id):
+        return sums[statistic_id][-1]
+
+    ids = [f"esb_smart_meter:{series}_{MPRN}" for series in (
+        "usage", "usage_cost", "standing_charge", "standing_charge_energy",
+        *(f"usage_{band}" for band in ("day", "night", "peak", "boost")),
+        *(f"usage_cost_{band}" for band in ("day", "night", "peak", "boost")),
+    )]
+    sums = {statistic_id: await _sums(hass, statistic_id) for statistic_id in ids}
+    bands = ("day", "night", "peak", "boost")
+
+    assert sum(last(f"esb_smart_meter:usage_{b}_{MPRN}") for b in bands) == pytest.approx(last(USAGE_ID))
+    assert sum(last(f"esb_smart_meter:usage_cost_{b}_{MPRN}") for b in bands) + last(
+        f"esb_smart_meter:standing_charge_{MPRN}"
+    ) == pytest.approx(last(COST_ID))
+    # 1 kWh every hour: 3 boost hours a day, each costed at the boost rate
+    assert last(f"esb_smart_meter:usage_cost_boost_{MPRN}") == pytest.approx(
+        last(f"esb_smart_meter:usage_boost_{MPRN}") * 0.10
+    )
+    assert last(f"esb_smart_meter:usage_boost_{MPRN}") > 0 and last(f"esb_smart_meter:usage_peak_{MPRN}") > 0
+    assert set(sums[f"esb_smart_meter:standing_charge_energy_{MPRN}"]) == {0.0}
+
+
+@pytest.mark.asyncio
+async def test_band_breakdown_is_recosted_after_tariff_change(recorder_mock, hass, enable_custom_integrations, session):
+    tariff = {**TARIFF, "night_rate": 0.20, "peak_rate": 0.40, "boost_rate": 0.10, "boost_start": 2, "boost_end": 5}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MPRN,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+        subentries_data=[ConfigSubentryData(data=tariff, subentry_type="tariff", title="t", unique_id="2020-01-01")],
+    )
+    entry.add_to_hass(hass)
+    fetch = AsyncMock(return_value=_ten_days_of_usage())
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        boost_kwh = (await _sums(hass, f"esb_smart_meter:usage_boost_{MPRN}"))[-1]
+        peak_kwh = (await _sums(hass, f"esb_smart_meter:usage_peak_{MPRN}"))[-1]
+        assert (await _sums(hass, f"esb_smart_meter:usage_cost_boost_{MPRN}"))[-1] == pytest.approx(boost_kwh * 0.10)
+
+        subentry = next(iter(entry.subentries.values()))
+        hass.config_entries.async_update_subentry(entry, subentry, data={**tariff, "boost_rate": 0.05, "peak_end": 20})
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+        # rate change re-costs the band's history; band change moves kWh between bands
+        assert (await _sums(hass, f"esb_smart_meter:usage_cost_boost_{MPRN}"))[-1] == pytest.approx(boost_kwh * 0.05)
+        assert (await _sums(hass, f"esb_smart_meter:usage_boost_{MPRN}"))[-1] == pytest.approx(boost_kwh)
+        assert (await _sums(hass, f"esb_smart_meter:usage_peak_{MPRN}"))[-1] > peak_kwh
+        bands = [(await _sums(hass, f"esb_smart_meter:usage_{b}_{MPRN}"))[-1] for b in ("day", "night", "peak", "boost")]
+        assert sum(bands) == pytest.approx((await _sums(hass, USAGE_ID))[-1])
+        fetch.assert_awaited_once()  # no re-download
+

@@ -7,7 +7,11 @@ import pytest
 
 from custom_components.esb_smart_meter.models import DUBLIN_TZ
 from custom_components.esb_smart_meter.tariff import (
+    BANDS,
     TariffPeriod,
+    band_costs,
+    band_usage,
+    standing_charges,
     export_credits,
     fingerprint,
     tariff_periods,
@@ -178,3 +182,49 @@ def test_validate_period_checks_the_boost_window_only_when_set():
     assert validate_period(_form(boost_rate=0.09, boost_start=16, boost_end=18), set()) == {
         "base": "boost_overlaps_peak"
     }
+
+
+@pytest.mark.parametrize(
+    "hour, band",
+    [(1, "night"), (2, "boost"), (4, "boost"), (5, "night"), (8, "day"), (17, "peak"), (19, "day"), (23, "night")],
+)
+def test_band_at_names_the_band_each_hour_is_billed_in(hour, band):
+    assert _period(boost_rate=0.09).band_at(_local(2026, 10, 21, hour)) == band
+
+
+def test_flat_tariff_is_all_day_band():
+    flat = _period(day_rate=0.29, night_rate=0.29, peak_rate=0.29)
+    assert {flat.band_at(_local(2026, 10, 21, h)) for h in range(24)} == {"day"}
+    with_boost = _period(day_rate=0.29, night_rate=0.29, peak_rate=0.29, boost_rate=0.09)
+    assert {with_boost.band_at(_local(2026, 10, 21, h)) for h in range(24)} == {"day", "boost"}
+
+
+def test_weekday_only_peak_is_day_band_at_weekends():
+    assert _period(peak_weekdays_only=True).band_at(_local(2026, 10, 24, 17)) == "day"  # Saturday
+
+
+def test_bands_and_standing_charge_add_up_to_usage_and_cost():
+    start = datetime(2026, 10, 20, 0, tzinfo=UTC)
+    hourly = [(start + timedelta(hours=i), 0.5 + (i % 7) / 10) for i in range(72)]
+    periods = [
+        _period(boost_rate=0.09),
+        _period(effective_from=date(2026, 10, 21), day_rate=0.32, standing_charge=1.06),
+    ]
+
+    total_kwh = sum(kwh for _, kwh in hourly)
+    assert sum(v for b in BANDS for _, v in band_usage(hourly, periods, b)) == pytest.approx(total_kwh)
+    split = sum(v for b in BANDS for _, v in band_costs(hourly, periods, b)) + sum(
+        v for _, v in standing_charges(hourly, periods)
+    )
+    assert split == pytest.approx(sum(v for _, v in usage_costs(hourly, periods)))
+    # every series covers the same hours as the cost series
+    hours = [h for h, _ in usage_costs(hourly, periods)]
+    assert all([h for h, _ in band_usage(hourly, periods, b)] == hours for b in BANDS)
+
+
+def test_band_series_skip_hours_before_the_first_period():
+    start = datetime(2025, 12, 31, 20, tzinfo=UTC)
+    hourly = [(start + timedelta(hours=i), 1.0) for i in range(8)]  # 20:00 UTC 31 Dec .. 03:00 1 Jan
+    assert [h for h, _ in band_usage(hourly, [_period()], "night")][0] == datetime(2026, 1, 1, 0, tzinfo=UTC)
+    assert band_usage([], [_period()], "day") == [] and standing_charges(hourly, []) == []
+
