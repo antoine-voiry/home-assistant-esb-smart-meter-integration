@@ -316,8 +316,13 @@ class SessionManager:
                     redirect_host,
                 )
                 return False
-            response.raise_for_status()
-            return False
+            raise aiohttp.ClientResponseError(
+                response.request_info,
+                response.history,
+                status=status,
+                message=str(response.reason or ""),
+                headers=response.headers,
+            )
 
     def extract_cookies_from_jar(self, cookie_jar) -> dict[str, str]:
         """Extract cookies from aiohttp cookie jar.
@@ -344,6 +349,7 @@ class SessionManager:
         """
         esb_url = URL("https://myaccount.esbnetworks.ie")
 
+        loaded = 0
         for name, value in cookies.items():
             # A Morsel keeps the value as pasted; the jar (quote_cookie=False) sends it unquoted
             morsel = Morsel()
@@ -355,8 +361,9 @@ class SessionManager:
             morsel["domain"] = "myaccount.esbnetworks.ie"
             morsel["path"] = "/"
             cookie_jar.update_cookies({name: morsel}, esb_url)
+            loaded += 1
 
-        _LOGGER.debug("Loaded %d cookies to jar", len(cookies))
+        _LOGGER.debug("Loaded %d cookies to jar", loaded)
 
     async def save_manual_cookies(self, cookie_string: str, user_agent: str | None = None) -> bool:
         """Save manually provided cookies from user (for CAPTCHA bypass).

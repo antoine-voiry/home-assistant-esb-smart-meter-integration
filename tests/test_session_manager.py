@@ -8,6 +8,7 @@ import aiohttp
 import pytest
 from homeassistant.util import dt as dt_util
 
+from custom_components.esb_smart_meter.const import ESB_MYACCOUNT_URL
 from custom_components.esb_smart_meter.session_manager import (
     CaptchaRequiredException,
     SessionManager,
@@ -454,9 +455,8 @@ class TestCheckSession:
     @staticmethod
     def _http(status, location=""):
         inner = MagicMock(status=status, headers={"Location": location})
-        inner.raise_for_status = MagicMock(
-            side_effect=aiohttp.ClientResponseError(MagicMock(), (), status=status) if status >= 400 else None
-        )
+        inner.reason = "Reason"
+        inner.history = ()
         ctx = MagicMock()
         ctx.__aenter__ = AsyncMock(return_value=inner)
         ctx.__aexit__ = AsyncMock(return_value=None)
@@ -465,6 +465,17 @@ class TestCheckSession:
     @pytest.mark.asyncio
     async def test_200_is_logged_in(self, mock_hass):
         assert await SessionManager(mock_hass, "12345678901").check_session(self._http(200), "UA") is True
+
+    @pytest.mark.asyncio
+    async def test_request_goes_to_account_page_like_a_browser(self, mock_hass):
+        http = self._http(200)
+        await SessionManager(mock_hass, "12345678901").check_session(http, "UA-1")
+        http.get.assert_called_once()
+        assert http.get.call_args.args == (ESB_MYACCOUNT_URL,)
+        kwargs = http.get.call_args.kwargs
+        assert kwargs["allow_redirects"] is False
+        assert kwargs["headers"]["User-Agent"] == "UA-1"
+        assert kwargs["headers"]["Sec-Fetch-Mode"] == "navigate"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [302, 401, 403])
@@ -480,8 +491,9 @@ class TestCheckSession:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [429, 500, 503])
     async def test_esb_trouble_raises(self, mock_hass, status):
-        with pytest.raises(aiohttp.ClientResponseError):
+        with pytest.raises(aiohttp.ClientResponseError) as exc:
             await SessionManager(mock_hass, "12345678901").check_session(self._http(status), "UA")
+        assert exc.value.status == status
 
     @pytest.mark.asyncio
     async def test_network_error_raises(self, mock_hass):

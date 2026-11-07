@@ -304,13 +304,16 @@ class TestCookiesSentAsPasted:
         assert sm._parse_cookie_string(pasted) == {".AspNetCore.Cookies": "CfDJ8AbCDeF", "ARRAffinity": "x"}
 
     @pytest.mark.asyncio
-    async def test_values_are_not_quoted_and_bad_names_are_skipped(self, mock_hass):
-
+    async def test_values_are_not_quoted_and_bad_names_are_skipped(self, mock_hass, caplog):
+        caplog.set_level("DEBUG")
         sm = SessionManager(mock_hass, "12345678901")
         jar = aiohttp.CookieJar(quote_cookie=False, unsafe=True)  # as utils.create_esb_session builds it
         sm.load_cookies_to_jar(jar, {"OptanonConsent": "isGpcEnabled=0&a=b/c,d", "bad[name]": "v"})
         sent = jar.filter_cookies(URL("https://myaccount.esbnetworks.ie/")).output(header="", sep=";").strip()
         assert sent == "OptanonConsent=isGpcEnabled=0&a=b/c,d"
+        assert "Skipping cookie bad[name]" in caplog.text
+        assert "Loaded 1 cookies to jar" in caplog.text
+        assert "isGpcEnabled" not in caplog.text  # values are never logged
 
 
 class TestResumeSession:
