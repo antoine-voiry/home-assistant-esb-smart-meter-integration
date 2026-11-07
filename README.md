@@ -241,6 +241,7 @@ ESB Networks has implemented CAPTCHA protection on their login system. This inte
 - You may see: `"ESB Networks requires CAPTCHA verification"`
 - This could be temporary rate limiting or permanent security change
 - Currently **no automated solution** exists for CAPTCHA bypass
+- Workaround: log in with your browser and paste the session into the integration, see [CAPTCHA-SETUP.md](CAPTCHA-SETUP.md)
 
 ### Data Availability
 
