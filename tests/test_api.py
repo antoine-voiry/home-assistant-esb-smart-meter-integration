@@ -15,14 +15,18 @@ class TestESBDataApi:
 
     @pytest.fixture
     def esb_api(self, mock_hass, mock_aiohttp_session):
-        """Create ESBDataApi instance."""
-        return ESBDataApi(
+        """Create ESBDataApi instance with an explicitly empty session cache."""
+        api = ESBDataApi(
             hass=mock_hass,
             session=mock_aiohttp_session,
             username="test@example.com",
             password="test-password",
             mprn="12345678901",
         )
+        # mock_hass.async_add_executor_job is an AsyncMock that does not run the
+        # file read, so state "no saved session" explicitly.
+        api._session_manager.load_session = AsyncMock(return_value=None)
+        return api
 
     @pytest.mark.asyncio
     async def test_login_success(self, esb_api, sample_esb_login_html, sample_esb_confirm_html):
