@@ -10,9 +10,12 @@ And the instructions asked for document.cookie, which cannot see ESB's HttpOnly
 login cookies, so the paste never contained the session in the first place.
 """
 
+import json
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.util import dt as dt_util
 
 from custom_components.esb_smart_meter.api_client import ESBDataApi
 from custom_components.esb_smart_meter.const import (
@@ -215,6 +218,31 @@ class TestSessionLocation:
         await sm._async_ensure_storage()
         assert not legacy.exists()
         assert sm._session_file.read_text(encoding="utf-8") == '{"cookies": {"a": "1"}}'
+
+    @pytest.mark.asyncio
+    async def test_load_session_moves_legacy_file_and_returns_it(self, tmp_path):
+        legacy = tmp_path / "esb_smart_meter" / "session_cache_12345678901.json"
+        legacy.parent.mkdir()
+        expires_at = (dt_util.utcnow() + timedelta(days=1)).isoformat()
+        legacy.write_text(
+            json.dumps(
+                {"cookies": {"a": "1"}, "mprn": "12345678901", "expires_at": expires_at}
+            ),
+            encoding="utf-8",
+        )
+        hass = self._hass(tmp_path)
+
+        async def run(func, *args):
+            return func(*args)
+
+        hass.async_add_executor_job = run
+        sm = SessionManager(hass, "12345678901")
+
+        session = await sm.load_session()
+
+        assert session is not None
+        assert session["cookies"] == {"a": "1"}
+        assert not legacy.exists()
 
 
 class TestFullLoginKeepsSession:

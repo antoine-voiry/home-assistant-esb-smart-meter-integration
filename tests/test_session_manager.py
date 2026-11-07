@@ -38,6 +38,14 @@ def session_manager(mock_hass):
 class TestSessionManager:
     """Tests for SessionManager class."""
 
+    @pytest.mark.asyncio
+    async def test_prepare_storage_survives_mkdir_failure(self, mock_hass):
+        """A failed mkdir is logged, not raised, and storage still counts as prepared."""
+        sm = SessionManager(mock_hass, "12345678901")
+        with patch.object(Path, "mkdir", side_effect=PermissionError("denied")):
+            await sm._async_ensure_storage()
+        assert sm._storage_ready is True
+
     def test_init(self, session_manager, mock_hass):
         """Test SessionManager initialization."""
         assert session_manager._hass == mock_hass

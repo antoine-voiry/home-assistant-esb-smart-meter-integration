@@ -2,8 +2,8 @@
 
 import json
 import logging
-from functools import partial
 from datetime import datetime, timedelta
+from functools import partial
 from http.cookies import CookieError, Morsel
 from pathlib import Path
 from typing import Any
@@ -84,6 +84,7 @@ class SessionManager:
             self._move_legacy_session(self._legacy_file)
 
     async def _async_ensure_storage(self) -> None:
+        """Prepare the storage folder once, in the executor."""
         if not self._storage_ready:
             await self._hass.async_add_executor_job(self._prepare_storage)
             self._storage_ready = True
