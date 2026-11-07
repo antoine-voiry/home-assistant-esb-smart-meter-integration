@@ -100,10 +100,12 @@ async def test_rejected_password_at_setup_starts_reauth(
 
 
 def _ten_days_of_usage(days_ago: int = 1, days: int = 10) -> ESBData:
-    end = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=days_ago)
+    # Step back in UTC and label in Dublin time, like ESB: a window spanning the October
+    # clock change then repeats the 01:xx labels instead of losing an hour.
+    end = dt_util.utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=days_ago)
     rows = [
         {
-            "Read Date and End Time": (end - timedelta(minutes=30 * i)).strftime("%d-%m-%Y %H:%M"),
+            "Read Date and End Time": (end - timedelta(minutes=30 * i)).astimezone(DUBLIN_TZ).strftime("%d-%m-%Y %H:%M"),
             "Read Value": "0.5",
             "Read Type": "Active Import Interval (kWh)",
         }
