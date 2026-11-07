@@ -380,6 +380,7 @@ async def test_remove_entry_deletes_import_state():
     from custom_components.esb_smart_meter.import_state import COST_SERIES
 
     assert {"usage_cost_peak", "usage_day", "standing_charge"} <= set(COST_SERIES)
+    assert "standing_charge_energy" in COST_SERIES  # store left behind by pre-1.5.0 builds
     assert [c.args for c in state_cls.call_args_list] == [(hass, "entry1", series) for series in COST_SERIES]
 
 

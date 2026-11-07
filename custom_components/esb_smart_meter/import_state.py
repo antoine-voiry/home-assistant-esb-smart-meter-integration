@@ -13,6 +13,7 @@ COST_SERIES = (
     "usage_cost",
     "export_credit",
     "standing_charge",
+    "standing_charge_energy",  # store left by pre-1.5.0 builds; only used to remove it
     *(f"usage_{band}" for band in BANDS),
     *(f"usage_cost_{band}" for band in BANDS),
 )
