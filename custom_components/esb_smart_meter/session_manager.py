@@ -14,6 +14,7 @@ from yarl import URL
 
 from .const import (
     DOMAIN,
+    ESB_MYACCOUNT_URL,
     SESSION_EXPIRY_HOURS,
     SESSION_FILE_NAME,
     SESSION_SOURCE_LOGIN,
@@ -225,67 +226,43 @@ class SessionManager:
         except Exception as err:
             _LOGGER.error("Error clearing session: %s", err)
 
-    async def validate_session_cookies(self, cookies: dict[str, str], user_agent: str) -> bool:
-        """Validate that session cookies are still working.
+    async def check_session(self, http_session: aiohttp.ClientSession, user_agent: str) -> bool:
+        """Ask ESB whether the cookies in http_session's jar are logged in.
 
-        Args:
-            cookies: Cookies to validate
-            user_agent: User agent to use for validation request
-
-        Returns:
-            True if cookies are valid and session is active
+        Loads the account page, as a browser does first: True on 200, False when ESB
+        sends the browser to log in (3xx, 401, 403). Network errors, 429 and 5xx raise,
+        since they say nothing about the cookies.
         """
-        try:
-            # Create a temporary session for validation
-            session = aiohttp.ClientSession(
-                cookie_jar=aiohttp.CookieJar(unsafe=True),
-                timeout=aiohttp.ClientTimeout(total=30),
-            )
-
-            # Load the cookies the same way the real session does
-            self.load_cookies_to_jar(session.cookie_jar, cookies)
-
-            validation_headers = {
-                "User-Agent": user_agent,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Referer": "https://myaccount.esbnetworks.ie/",
-            }
-
-            # Try to access a protected page that requires authentication
-            async with session.get(
-                "https://myaccount.esbnetworks.ie/",  # Main account page
-                headers=validation_headers,
-                allow_redirects=False,  # Don't follow redirects to login
-            ) as response:
-                status = response.status
-                redirect_host = "-"
-                if status != 200:
-                    # Host only: the full Location carries OIDC state/nonce parameters.
-                    try:
-                        redirect_host = URL(str(response.headers.get("Location", ""))).host or "-"
-                    except Exception:  # noqa: BLE001 - diagnostics must never fail validation
-                        pass
-
-            await session.close()
-
-            # If we get a 200 response, session is valid
+        headers = {
+            "User-Agent": user_agent,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": f"{ESB_MYACCOUNT_URL}/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+        }
+        async with http_session.get(
+            ESB_MYACCOUNT_URL,
+            headers=headers,
+            allow_redirects=False,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
+            status = response.status
             if status == 200:
                 _LOGGER.debug("Session validation successful - received 200 response")
                 return True
-
-            # WARNING, not DEBUG: this is the only line that says WHY a session was rejected.
-            # A 302 to login.esbnetworks.ie means the login cookie was not among those sent.
-            _LOGGER.warning(
-                "Session validation failed - ESB answered HTTP %d (redirect host: %s)",
-                status,
-                redirect_host,
-            )
-            return False
-
-        except Exception as err:
-            _LOGGER.debug("Session validation failed with exception: %s", err)
-            if "session" in locals():
-                await session.close()
+            if status < 400 or status in (401, 403):
+                # Host only: the full Location carries OIDC state/nonce parameters.
+                redirect_host = URL(str(response.headers.get("Location", ""))).host or "-"
+                # WARNING, not DEBUG: this is the only line that says WHY a session was rejected.
+                # A 302 to login.esbnetworks.ie means the login cookie was not among those sent.
+                _LOGGER.warning(
+                    "Session validation failed - ESB answered HTTP %d (redirect host: %s)",
+                    status,
+                    redirect_host,
+                )
+                return False
+            response.raise_for_status()
             return False
 
     def extract_cookies_from_jar(self, cookie_jar) -> dict[str, str]:

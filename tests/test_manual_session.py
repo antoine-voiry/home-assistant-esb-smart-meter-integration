@@ -96,21 +96,26 @@ class TestCachedManualSession:
         }
         sm = esb_api._session_manager
         esb_api._session.get = MagicMock(
-            side_effect=[_response(), _response(), _response({"token": "tok-1"})]
+            side_effect=[_response(), _response({"token": "tok-1"})]
         )
         esb_api._session.post = MagicMock()
         with (
             patch.object(sm, "load_session", AsyncMock(return_value=cached)),
-            patch.object(sm, "validate_session_cookies", AsyncMock(return_value=True)),
+            patch.object(sm, "check_session", AsyncMock(return_value=True)),
             patch.object(sm, "load_cookies_to_jar"),
             patch.object(sm, "save_session", AsyncMock(return_value=True)) as save,
             patch("custom_components.esb_smart_meter.api_client.asyncio.sleep", AsyncMock()),
         ):
             result = await esb_api._ESBDataApi__login()
 
-        assert result == {"download_token": "tok-1", "user_agent": BROWSER_UA}
+        assert result == {
+            "download_token": "tok-1",
+            "user_agent": BROWSER_UA,
+            "source": SESSION_SOURCE_MANUAL,
+            "token_from_cache": False,
+        }
         urls = [c.args[0] for c in esb_api._session.get.call_args_list]
-        assert urls == [ESB_MYACCOUNT_URL, ESB_CONSUMPTION_URL, ESB_TOKEN_URL]
+        assert urls == [ESB_CONSUMPTION_URL, ESB_TOKEN_URL]
         first = esb_api._session.get.call_args_list[0].kwargs["headers"]
         assert first["User-Agent"] == BROWSER_UA
         assert first["Referer"] == f"{ESB_MYACCOUNT_URL}/"
@@ -132,7 +137,7 @@ class TestCachedManualSession:
         esb_api._session.get = MagicMock()
         with (
             patch.object(sm, "load_session", AsyncMock(return_value=cached)),
-            patch.object(sm, "validate_session_cookies", AsyncMock(return_value=True)),
+            patch.object(sm, "check_session", AsyncMock(return_value=True)),
             patch.object(sm, "load_cookies_to_jar"),
         ):
             result = await esb_api._ESBDataApi__login()
@@ -152,7 +157,7 @@ class TestCachedManualSession:
         esb_api._session.post = MagicMock()
         with (
             patch.object(sm, "load_session", AsyncMock(return_value=cached)),
-            patch.object(sm, "validate_session_cookies", AsyncMock(return_value=False)),
+            patch.object(sm, "check_session", AsyncMock(return_value=False)),
             patch.object(sm, "clear_session", AsyncMock()) as clear,
         ):
             with pytest.raises(CaptchaRequiredException):
@@ -174,7 +179,7 @@ class TestCachedManualSession:
         esb_api._session.get = MagicMock(side_effect=RuntimeError("login attempted"))
         with (
             patch.object(sm, "load_session", AsyncMock(return_value=cached)),
-            patch.object(sm, "validate_session_cookies", AsyncMock(return_value=False)),
+            patch.object(sm, "check_session", AsyncMock(return_value=False)),
             patch.object(sm, "clear_session", AsyncMock()),
         ):
             with pytest.raises(RuntimeError, match="login attempted"):
@@ -264,3 +269,37 @@ class TestCookiesSentAsPasted:
         sm.load_cookies_to_jar(jar, {"OptanonConsent": "isGpcEnabled=0&a=b/c,d", "bad[name]": "v"})
         sent = jar.filter_cookies(URL("https://myaccount.esbnetworks.ie/")).output(header="", sep=";").strip()
         assert sent == "OptanonConsent=isGpcEnabled=0&a=b/c,d"
+
+
+class TestResumeSession:
+    @pytest.mark.asyncio
+    async def test_network_error_keeps_the_session(self, esb_api):
+        import aiohttp
+
+        cached = {"cookies": {"c": "1"}, "user_agent": BROWSER_UA, "download_token": None, "source": SESSION_SOURCE_MANUAL}
+        sm = esb_api._session_manager
+        with (
+            patch.object(sm, "load_session", AsyncMock(return_value=cached)),
+            patch.object(sm, "check_session", AsyncMock(side_effect=aiohttp.ClientConnectionError("dns"))),
+            patch.object(sm, "clear_session", AsyncMock()) as clear,
+            patch.object(sm, "mark_rejected", AsyncMock(), create=True) as mark,
+        ):
+            with pytest.raises(aiohttp.ClientConnectionError):
+                await esb_api._ESBDataApi__login()
+        clear.assert_not_awaited()
+        mark.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_token_renewal_saves_the_jar_cookies(self, esb_api):
+        cached = {"cookies": {"c": "1"}, "user_agent": BROWSER_UA, "download_token": None, "source": SESSION_SOURCE_MANUAL}
+        sm = esb_api._session_manager
+        esb_api._session.get = MagicMock(side_effect=[_response(), _response({"token": "tok-1"})])
+        with (
+            patch.object(sm, "load_session", AsyncMock(return_value=cached)),
+            patch.object(sm, "check_session", AsyncMock(return_value=True)),
+            patch.object(sm, "extract_cookies_from_jar", return_value={"c": "1", "XSRF-TOKEN": "new"}),
+            patch.object(sm, "save_session", AsyncMock(return_value=True)) as save,
+            patch("custom_components.esb_smart_meter.api_client.asyncio.sleep", AsyncMock()),
+        ):
+            await esb_api._ESBDataApi__login()
+        assert save.await_args.kwargs["cookies"] == {"c": "1", "XSRF-TOKEN": "new"}
