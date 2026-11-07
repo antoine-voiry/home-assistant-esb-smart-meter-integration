@@ -2,6 +2,7 @@
 
 import json
 import logging
+from functools import partial
 from datetime import datetime, timedelta
 from http.cookies import CookieError, Morsel
 from pathlib import Path
@@ -66,14 +67,26 @@ class SessionManager:
 
         self._session_file = self._storage_path / f"{SESSION_FILE_NAME}_{mprn_str}.json"
 
-        # Ensure storage directory exists (with error handling for tests)
+        self._legacy_file = (
+            legacy_path / self._session_file.name
+            if legacy_path is not None and legacy_path != self._storage_path
+            else None
+        )
+        self._storage_ready = False
+
+    def _prepare_storage(self) -> None:
+        """Create the storage folder and move a pre-1.4.1 session file into it (executor)."""
         try:
             self._storage_path.mkdir(parents=True, exist_ok=True)
-        except (OSError, PermissionError) as err:
+        except OSError as err:
             _LOGGER.debug("Could not create storage directory: %s", err)
+        if self._legacy_file is not None:
+            self._move_legacy_session(self._legacy_file)
 
-        if legacy_path is not None and legacy_path != self._storage_path:
-            self._move_legacy_session(legacy_path / self._session_file.name)
+    async def _async_ensure_storage(self) -> None:
+        if not self._storage_ready:
+            await self._hass.async_add_executor_job(self._prepare_storage)
+            self._storage_ready = True
 
     def _move_legacy_session(self, legacy_file: Path) -> None:
         """Move a session file out of the old, backup-visible location."""
@@ -94,9 +107,7 @@ class SessionManager:
             Session data dictionary if valid session exists, None otherwise
         """
         try:
-            if not self._session_file.exists():
-                _LOGGER.debug("No session file found at %s", self._session_file)
-                return None
+            await self._async_ensure_storage()
 
             # Read session data
             session_data = await self._hass.async_add_executor_job(self._read_session_file)
@@ -122,6 +133,9 @@ class SessionManager:
 
     def _read_session_file(self) -> dict[str, Any] | None:
         """Read session file from disk (runs in executor)."""
+        if not self._session_file.exists():
+            _LOGGER.debug("No session file found at %s", self._session_file)
+            return None
         try:
             with open(self._session_file, "r", encoding="utf-8") as f:
                 return json.load(f)
@@ -148,6 +162,7 @@ class SessionManager:
             True if the session was written to disk
         """
         try:
+            await self._async_ensure_storage()
             # Calculate expiry time
             now = dt_util.utcnow()
             expires_at = now + timedelta(hours=SESSION_EXPIRY_HOURS)
@@ -221,9 +236,11 @@ class SessionManager:
     async def clear_session(self) -> None:
         """Clear saved session data."""
         try:
-            if self._session_file.exists():
-                await self._hass.async_add_executor_job(self._session_file.unlink)
-                _LOGGER.debug("Session cache cleared")
+            await self._async_ensure_storage()
+            await self._hass.async_add_executor_job(
+                partial(self._session_file.unlink, missing_ok=True)
+            )
+            _LOGGER.debug("Session cache cleared")
         except Exception as err:
             _LOGGER.error("Error clearing session: %s", err)
 

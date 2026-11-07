@@ -199,11 +199,20 @@ class TestSessionLocation:
         sm = SessionManager(self._hass(tmp_path), "12345678901")
         assert sm._session_file.parent == tmp_path / ".storage" / "esb_smart_meter"
 
-    def test_legacy_session_is_moved_not_left_behind(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_legacy_session_is_moved_not_left_behind(self, tmp_path):
         legacy = tmp_path / "esb_smart_meter" / "session_cache_12345678901.json"
         legacy.parent.mkdir()
         legacy.write_text('{"cookies": {"a": "1"}}', encoding="utf-8")
-        sm = SessionManager(self._hass(tmp_path), "12345678901")
+        hass = self._hass(tmp_path)
+
+        async def run(func, *args):
+            return func(*args)
+
+        hass.async_add_executor_job = run
+        sm = SessionManager(hass, "12345678901")
+        assert legacy.exists()  # nothing touched the disk on the event loop
+        await sm._async_ensure_storage()
         assert not legacy.exists()
         assert sm._session_file.read_text(encoding="utf-8") == '{"cookies": {"a": "1"}}'
 

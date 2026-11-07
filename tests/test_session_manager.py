@@ -167,7 +167,7 @@ class TestSessionManager:
         """Test clearing session."""
         mock_file = Mock()
         session_manager._session_file = mock_file
-        mock_file.exists.return_value = True
+        session_manager._storage_ready = True
 
         with patch.object(session_manager._hass, "async_add_executor_job") as mock_job:
             await session_manager.clear_session()
