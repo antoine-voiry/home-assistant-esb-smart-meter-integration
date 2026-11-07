@@ -11,6 +11,7 @@ login cookies, so the paste never contained the session in the first place.
 """
 
 import json
+from pathlib import Path
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -432,3 +433,50 @@ class TestStaleDownloadToken:
             with pytest.raises(aiohttp.ClientResponseError):
                 await esb_api.fetch()
         renew.assert_not_awaited()
+
+
+class TestRejectionMarkerLifetime:
+    @staticmethod
+    def _sm(tmp_path):
+        hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
+
+        async def run(func, *args):
+            return func(*args)
+
+        hass.async_add_executor_job = run
+        return SessionManager(hass, "12345678901")
+
+    @pytest.mark.asyncio
+    async def test_marker_outlives_nearly_expired_session(self, tmp_path):
+        import json
+        from datetime import timedelta
+
+        from homeassistant.util import dt as dt_util
+
+        sm = self._sm(tmp_path)
+        await sm.save_session(cookies={"c": "1"}, user_agent=BROWSER_UA, download_token="t", source=SESSION_SOURCE_MANUAL)
+        data = json.loads(Path(sm._session_file).read_text())
+        data["expires_at"] = (dt_util.utcnow() + timedelta(hours=1)).isoformat()
+        Path(sm._session_file).write_text(json.dumps(data))
+        await sm.mark_rejected(await sm.load_session())
+        saved = await sm.load_session()
+        assert saved is not None
+        from datetime import datetime
+
+        assert datetime.fromisoformat(saved["expires_at"]) >= dt_util.utcnow() + timedelta(hours=23)
+
+    @pytest.mark.asyncio
+    async def test_unparsable_rejected_at_is_not_active(self, tmp_path):
+        assert self._sm(tmp_path).rejection_active({"rejected_at": "garbage"}) is False
+
+    @pytest.mark.asyncio
+    async def test_session_file_is_owner_only(self, tmp_path):
+        import stat
+
+        sm = self._sm(tmp_path)
+        Path(sm._session_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(sm._session_file).write_text("{}")
+        Path(sm._session_file).chmod(0o644)
+        await sm.save_session(cookies={"c": "1"}, user_agent=BROWSER_UA, download_token="t", source=SESSION_SOURCE_MANUAL)
+        assert stat.S_IMODE(Path(sm._session_file).stat().st_mode) == 0o600

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from functools import partial
 from http.cookies import CookieError, Morsel
@@ -192,8 +193,11 @@ class SessionManager:
 
     def _write_session_file(self, session_data: dict[str, Any]) -> None:
         """Write session file to disk (runs in executor)."""
-        with open(self._session_file, "w", encoding="utf-8") as f:
+        # The file holds live login cookies: owner-only, also for a pre-existing file
+        fd = os.open(self._session_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(session_data, f, indent=2)
+        os.chmod(self._session_file, 0o600)
 
     def _is_session_valid(self, session_data: dict[str, Any]) -> bool:
         """Check if session data is still valid.
@@ -247,7 +251,19 @@ class SessionManager:
 
     async def mark_rejected(self, session_data: dict[str, Any]) -> None:
         """Keep a rejected pasted session as a marker, so no scripted login follows straight away."""
-        marked = {**session_data, "download_token": None, "rejected_at": dt_util.utcnow().isoformat()}
+        rejected_at = dt_util.utcnow()
+        cooldown_end = rejected_at + timedelta(hours=CAPTCHA_COOLDOWN_HOURS)
+        try:
+            expires_at = max(datetime.fromisoformat(session_data["expires_at"]), cooldown_end)
+        except (KeyError, TypeError, ValueError):
+            expires_at = cooldown_end
+        # expires_at is stretched so load_session does not delete the marker inside the cooldown
+        marked = {
+            **session_data,
+            "download_token": None,
+            "rejected_at": rejected_at.isoformat(),
+            "expires_at": expires_at.isoformat(),
+        }
         await self._hass.async_add_executor_job(self._write_session_file, marked)
 
     def rejection_active(self, session_data: dict[str, Any]) -> bool:
@@ -255,7 +271,11 @@ class SessionManager:
         rejected_at = session_data.get("rejected_at")
         if not rejected_at:
             return False
-        return dt_util.utcnow() - datetime.fromisoformat(rejected_at) < timedelta(hours=CAPTCHA_COOLDOWN_HOURS)
+        try:
+            rejected = datetime.fromisoformat(rejected_at)
+        except (TypeError, ValueError):
+            return False
+        return dt_util.utcnow() - rejected < timedelta(hours=CAPTCHA_COOLDOWN_HOURS)
 
     async def check_session(self, http_session: aiohttp.ClientSession, user_agent: str) -> bool:
         """Ask ESB whether the cookies in http_session's jar are logged in.
@@ -284,7 +304,10 @@ class SessionManager:
                 return True
             if status < 400 or status in (401, 403):
                 # Host only: the full Location carries OIDC state/nonce parameters.
-                redirect_host = URL(str(response.headers.get("Location", ""))).host or "-"
+                try:
+                    redirect_host = URL(str(response.headers.get("Location", ""))).host or "-"
+                except ValueError:
+                    redirect_host = "-"
                 # WARNING, not DEBUG: this is the only line that says WHY a session was rejected.
                 # A 302 to login.esbnetworks.ie means the login cookie was not among those sent.
                 _LOGGER.warning(
