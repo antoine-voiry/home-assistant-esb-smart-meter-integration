@@ -12,10 +12,11 @@ class TestConfigFlow:
     """Test config flow."""
 
     @pytest.fixture
-    def flow(self):
+    def flow(self, tmp_path):
         """Create config flow instance."""
         flow = ESBSmartMeterConfigFlow()
         flow.hass = MagicMock()
+        flow.hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
         flow.hass.config_entries = MagicMock()
         flow.hass.config_entries.async_entries.return_value = []
         return flow
