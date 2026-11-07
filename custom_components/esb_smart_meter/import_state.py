@@ -6,9 +6,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN
+from .tariff import BANDS
 
 STORAGE_VERSION = 1
-COST_SERIES = ("usage_cost", "export_credit")
+COST_SERIES = (
+    "usage_cost",
+    "export_credit",
+    "standing_charge",
+    *(f"usage_{band}" for band in BANDS),
+    *(f"usage_cost_{band}" for band in BANDS),
+)
 
 
 class ImportState:

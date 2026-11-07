@@ -25,11 +25,10 @@ from .statistics import (
 )
 from .tariff import (
     BANDS,
-    band_costs,
-    band_usage,
+    BandSplit,
     export_credits,
     fingerprint,
-    standing_charges,
+    split_by_band,
     tariff_periods,
     usage_costs,
 )
@@ -665,38 +664,53 @@ class BaseBandSensor(BaseCostSensor):
     def _downloaded(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
         return esb_data.hourly_usage()
 
+    def _split(self, esb_data: ESBData) -> BandSplit:
+        """Compute the split once per update and tariff set, for all band sensors."""
+        periods = tariff_periods(self._entry)
+        key = fingerprint(periods)
+        cached = self.coordinator.band_split
+        if cached is None or cached[0] is not esb_data or cached[1] != key:
+            cached = (esb_data, key, split_by_band(self._downloaded(esb_data=esb_data), periods))
+            self.coordinator.band_split = cached
+        return cached[2]
 
-class BandUsageSensor(BaseBandSensor):
+
+class _PerBandSensor(BaseBandSensor):
+    """A band sensor for one of BANDS."""
+
+    _series_prefix: str
+    _label_prefix: str
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry, band: str) -> None:
+        """Initialize the sensor."""
+        self._band = band
+        self._series = f"{self._series_prefix}_{band}"
+        self._label = f"{self._label_prefix} {_BAND_LABELS[band]}"
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key=f"{self._series}_total", entry=entry)
+
+
+class BandUsageSensor(_PerBandSensor):
     """kWh imported in one tariff band."""
 
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_icon = "mdi:flash"
     _statistics_unit = UnitOfEnergy.KILO_WATT_HOUR
-
-    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry, band: str) -> None:
-        """Initialize the sensor."""
-        self._band = band
-        self._series = f"usage_{band}"
-        self._label = f"Usage {_BAND_LABELS[band]}"
-        super().__init__(coordinator=coordinator, mprn=mprn, translation_key=f"usage_{band}_total", entry=entry)
+    _series_prefix = "usage"
+    _label_prefix = "Usage"
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
-        return band_usage(self._downloaded(esb_data=esb_data), tariff_periods(self._entry), self._band)
+        return self._split(esb_data).usage[self._band]
 
 
-class BandCostSensor(BaseBandSensor):
+class BandCostSensor(_PerBandSensor):
     """Energy cost of one tariff band, without the standing charge."""
 
-    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry, band: str) -> None:
-        """Initialize the sensor."""
-        self._band = band
-        self._series = f"usage_cost_{band}"
-        self._label = f"Usage cost {_BAND_LABELS[band]}"
-        super().__init__(coordinator=coordinator, mprn=mprn, translation_key=f"usage_cost_{band}_total", entry=entry)
+    _series_prefix = "usage_cost"
+    _label_prefix = "Usage cost"
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
-        return band_costs(self._downloaded(esb_data=esb_data), tariff_periods(self._entry), self._band)
+        return self._split(esb_data).cost[self._band]
 
 
 class StandingChargeSensor(BaseBandSensor):
@@ -710,32 +724,28 @@ class StandingChargeSensor(BaseBandSensor):
         super().__init__(coordinator=coordinator, mprn=mprn, translation_key="standing_charge_total", entry=entry)
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
-        return standing_charges(self._downloaded(esb_data=esb_data), tariff_periods(self._entry))
+        return self._split(esb_data).standing
 
 
-class StandingChargeEnergySensor(BaseBandSensor):
+class StandingChargeEnergySensor(BaseHistorySensor):
     """Always 0 kWh: the energy half of a standing-charge grid source.
 
     The Energy dashboard only lists a grid source that has an energy statistic, so the
-    standing charge gets this zero series to sit beside its cost.
+    standing charge gets this zero series to sit beside its cost. Zeros never change,
+    so unlike the cost series it is not re-imported when the tariffs change.
     """
 
-    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_entity_registry_visible_default = False
     _attr_icon = "mdi:flash-off"
-    _statistics_unit = UnitOfEnergy.KILO_WATT_HOUR
     _series = "standing_charge_energy"
     _label = "Standing charge (0 kWh)"
 
     def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            coordinator=coordinator, mprn=mprn, translation_key="standing_charge_energy_total", entry=entry
-        )
+        """Initialize the sensor (entry kept for a uniform constructor in async_setup_entry)."""
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="standing_charge_energy_total")
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
-        hours = standing_charges(self._downloaded(esb_data=esb_data), tariff_periods(self._entry))
-        return [(hour, 0.0) for hour, _ in hours]
+        return [(hour, 0.0) for hour, _ in esb_data.hourly_usage()]
 
 
 class LastUpdateSensor(SensorEntity):

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -17,6 +17,9 @@ from .api_client import ESBDataApi, InvalidAuthException
 from .const import CAPTCHA_NOTIFICATION_ID, DEFAULT_SCAN_INTERVAL, DOMAIN, ESB_MYACCOUNT_URL
 from .models import ESBData
 from .session_manager import CaptchaRequiredException
+
+if TYPE_CHECKING:
+    from .tariff import BandSplit
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +78,8 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         self.mprn = mprn
         self._captcha_notification_sent = False
         self.last_successful_update_time: datetime | None = None
+        # (downloaded data, tariff fingerprint, split) shared by the band sensors of one update
+        self.band_split: tuple[ESBData, str, "BandSplit"] | None = None
 
     async def _async_update_data(self) -> ESBData:
         """

@@ -17,9 +17,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from custom_components.esb_smart_meter.const import DOMAIN
 from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.models import ESBData
-from custom_components.esb_smart_meter.tariff import TariffPeriod, fingerprint, usage_costs
+from custom_components.esb_smart_meter import sensor as sensor_module
+from custom_components.esb_smart_meter.tariff import BANDS, TariffPeriod, fingerprint, usage_costs
 from custom_components.esb_smart_meter.sensor import (
+    BandCostSensor,
+    BandUsageSensor,
     BaseBandSensor,
+    StandingChargeSensor,
     ApiStatusSensor,
     CircuitBreakerStatusSensor,
     DataAgeSensor,
@@ -1185,9 +1189,11 @@ class TestBandBreakdownSensors:
     async def test_band_sensors_are_hidden_with_their_own_statistics(self, mock_hass, mock_config_entry):
         async_add_entities = MagicMock()
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
-        band = [s for s in async_add_entities.call_args[0][0] if isinstance(s, BaseBandSensor)]
+        every = async_add_entities.call_args[0][0]
+        band = [s for s in every if isinstance(s, BaseBandSensor)]
 
-        assert len(band) == 10
+        assert len(band) == 9  # plus the zero-energy standing charge sensor, which is not a cost series
+        band += [s for s in every if s.translation_key == "standing_charge_energy_total"]
         assert all(s.entity_registry_visible_default is False for s in band)
         by_key = {s.translation_key: s for s in band}
         assert by_key["usage_boost_total"]._statistic_id.startswith("esb_smart_meter:usage_boost_")
@@ -1198,3 +1204,48 @@ class TestBandBreakdownSensors:
         assert by_key["standing_charge_energy_total"]._statistics_unit == "kWh"
         assert by_key["usage_day_total"].entity_id == "sensor.esb_electricity_usage_day_total"
 
+
+
+class TestBandSplitCache:
+    """The 9 band sensors of one coordinator share one split per update."""
+
+    @staticmethod
+    def _sensors_and_data():
+        helper = TestCostSensors
+        coordinator = helper._coordinator()
+        coordinator.band_split = None
+        entry = helper._entry(helper.PERIOD)
+        kwargs = dict(coordinator=coordinator, mprn="12345678901", entry=entry)
+        sensors = [
+            *(BandUsageSensor(band=b, **kwargs) for b in BANDS),
+            *(BandCostSensor(band=b, **kwargs) for b in BANDS),
+            StandingChargeSensor(**kwargs),
+        ]
+        return sensors, coordinator.data
+
+    def test_band_sensors_share_one_split_per_update(self):
+        band_sensors, esb_data = self._sensors_and_data()
+        with patch(
+            "custom_components.esb_smart_meter.sensor.split_by_band", wraps=sensor_module.split_by_band
+        ) as split:
+            for entity in band_sensors:
+                entity._hourly(esb_data=esb_data)
+        assert split.call_count == 1
+
+    def test_split_is_recomputed_for_new_data(self):
+        band_sensors, esb_data = self._sensors_and_data()
+        with patch(
+            "custom_components.esb_smart_meter.sensor.split_by_band", wraps=sensor_module.split_by_band
+        ) as split:
+            band_sensors[0]._hourly(esb_data=esb_data)
+            band_sensors[1]._hourly(esb_data=ESBData(data=[]))
+        assert split.call_count == 2
+
+    def test_standing_charge_energy_is_not_recosted_on_tariff_change(self):
+        from custom_components.esb_smart_meter.sensor import BaseCostSensor, StandingChargeEnergySensor
+
+        assert not issubclass(StandingChargeEnergySensor, BaseCostSensor)
+        sensor = StandingChargeEnergySensor(
+            coordinator=TestCostSensors._coordinator(), mprn="12345678901", entry=TestCostSensors._entry()
+        )
+        assert sensor.entity_registry_visible_default is False

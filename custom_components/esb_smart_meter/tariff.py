@@ -170,25 +170,36 @@ def usage_costs(hourly_usage: Hourly, periods: list[TariffPeriod]) -> Hourly:
     ]
 
 
-def band_usage(hourly_usage: Hourly, periods: list[TariffPeriod], band: str) -> Hourly:
-    """The kWh of each costed hour billed in `band` (0 for hours in other bands)."""
-    return [
-        (hour, kwh if period.band_at(local) == band else 0.0)
-        for hour, local, period, kwh in _costed_hours(hourly_usage, periods)
-    ]
+@dataclass(frozen=True)
+class BandSplit:
+    """Usage and cost split by tariff band, computed in one pass."""
+
+    usage: dict[str, Hourly]  # kWh; every downloaded hour, so the bands add up to Usage
+    cost: dict[str, Hourly]  # energy cost without the standing charge; costed hours only
+    standing: Hourly  # standing charge per costed hour; with the band costs it adds up to usage_costs
 
 
-def band_costs(hourly_usage: Hourly, periods: list[TariffPeriod], band: str) -> Hourly:
-    """The energy cost (no standing charge) of each costed hour billed in `band`."""
-    return [
-        (hour, kwh * period.rate_at(local) if period.band_at(local) == band else 0.0)
-        for hour, local, period, kwh in _costed_hours(hourly_usage, periods)
-    ]
+def split_by_band(hourly_usage: Hourly, periods: list[TariffPeriod]) -> BandSplit:
+    """Split usage and cost by the band each hour is billed in.
 
+    Hours with no tariff period have no cost but still count, as day, in the usage bands.
+    """
+    usage: dict[str, Hourly] = {band: [] for band in BANDS}
+    for hour, kwh in hourly_usage:
+        period = _period_for(periods, hour.astimezone(DUBLIN_TZ).date())
+        billed = period.band_at(hour.astimezone(DUBLIN_TZ)) if period is not None else "day"
+        for band in BANDS:
+            usage[band].append((hour, kwh if band == billed else 0.0))
 
-def standing_charges(hourly_usage: Hourly, periods: list[TariffPeriod]) -> Hourly:
-    """The standing charge of each costed hour; with the band costs it adds up to usage_costs."""
-    return [(hour, period.standing_charge / 24) for hour, _, period, _ in _costed_hours(hourly_usage, periods)]
+    cost: dict[str, Hourly] = {band: [] for band in BANDS}
+    standing: Hourly = []
+    for hour, local, period, kwh in _costed_hours(hourly_usage, periods):
+        billed = period.band_at(local)
+        rate = float(getattr(period, f"{billed}_rate"))
+        for band in BANDS:
+            cost[band].append((hour, kwh * rate if band == billed else 0.0))
+        standing.append((hour, period.standing_charge / 24))
+    return BandSplit(usage=usage, cost=cost, standing=standing)
 
 
 def export_credits(hourly_export: Hourly, periods: list[TariffPeriod]) -> Hourly:

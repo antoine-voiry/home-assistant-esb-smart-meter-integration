@@ -377,7 +377,10 @@ async def test_remove_entry_deletes_import_state():
         state_cls.return_value.async_remove = AsyncMock()
         await async_remove_entry(hass, entry)
 
-    assert [c.args for c in state_cls.call_args_list] == [(hass, "entry1", "usage_cost"), (hass, "entry1", "export_credit")]
+    from custom_components.esb_smart_meter.import_state import COST_SERIES
+
+    assert {"usage_cost_peak", "usage_day", "standing_charge"} <= set(COST_SERIES)
+    assert [c.args for c in state_cls.call_args_list] == [(hass, "entry1", series) for series in COST_SERIES]
 
 
 @pytest.mark.asyncio

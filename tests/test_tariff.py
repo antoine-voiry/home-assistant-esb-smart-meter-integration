@@ -9,9 +9,7 @@ from custom_components.esb_smart_meter.models import DUBLIN_TZ
 from custom_components.esb_smart_meter.tariff import (
     BANDS,
     TariffPeriod,
-    band_costs,
-    band_usage,
-    standing_charges,
+    split_by_band,
     export_credits,
     fingerprint,
     tariff_periods,
@@ -207,23 +205,30 @@ def test_bands_and_standing_charge_add_up_to_usage_and_cost():
         _period(boost_rate=0.09),
         _period(effective_from=date(2026, 10, 21), day_rate=0.32, standing_charge=1.06),
     ]
+    split = split_by_band(hourly, periods)
 
-    total_kwh = sum(kwh for _, kwh in hourly)
-    assert sum(v for b in BANDS for _, v in band_usage(hourly, periods, b)) == pytest.approx(total_kwh)
-    split = sum(v for b in BANDS for _, v in band_costs(hourly, periods, b)) + sum(
-        v for _, v in standing_charges(hourly, periods)
-    )
-    assert split == pytest.approx(sum(v for _, v in usage_costs(hourly, periods)))
-    # every series covers the same hours as the cost series
+    assert sum(v for b in BANDS for _, v in split.usage[b]) == pytest.approx(sum(kwh for _, kwh in hourly))
+    costs = sum(v for b in BANDS for _, v in split.cost[b]) + sum(v for _, v in split.standing)
+    assert costs == pytest.approx(sum(v for _, v in usage_costs(hourly, periods)))
     hours = [h for h, _ in usage_costs(hourly, periods)]
-    assert all([h for h, _ in band_usage(hourly, periods, b)] == hours for b in BANDS)
+    assert all([h for h, _ in split.cost[b]] == hours for b in BANDS)
+    assert [h for h, _ in split.standing] == hours
 
 
-def test_band_series_skip_hours_before_the_first_period():
+def test_band_usage_covers_hours_before_the_first_period_as_day():
     start = datetime(2025, 12, 31, 20, tzinfo=UTC)
     hourly = [(start + timedelta(hours=i), 1.0) for i in range(8)]  # 20:00 UTC 31 Dec .. 03:00 1 Jan
-    assert [h for h, _ in band_usage(hourly, [_period()], "night")][0] == datetime(2026, 1, 1, 0, tzinfo=UTC)
-    assert band_usage([], [_period()], "day") == [] and standing_charges(hourly, []) == []
+    split = split_by_band(hourly, [_period()])
+    assert [h for h, _ in split.usage["day"]] == [h for h, _ in hourly]
+    assert sum(v for b in BANDS for _, v in split.usage[b]) == pytest.approx(8.0)
+    assert split.usage["day"][0][1] == 1.0  # 20:00 UTC, before the period: day
+    assert split.cost["night"][0][0] == datetime(2026, 1, 1, 0, tzinfo=UTC)  # costs still start at the period
+
+
+def test_split_of_nothing_is_empty():
+    split = split_by_band([], [_period()])
+    assert all(split.usage[b] == [] and split.cost[b] == [] for b in BANDS) and split.standing == []
+    assert split_by_band([(datetime(2026, 1, 1, tzinfo=UTC), 1.0)], []).standing == []
 
 
 
