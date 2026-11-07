@@ -132,11 +132,12 @@ class TestESBDataUpdateCoordinator:
         await hass.async_block_till_done()
 
     @pytest.mark.asyncio
-    async def test_manual_session_saved_rearms_notification_and_refreshes(self, coordinator):
+    async def test_manual_session_saved_flags_renotify_and_refreshes(self, coordinator):
         coordinator._captcha_notification_sent = True
         coordinator.async_request_refresh = AsyncMock()
         await coordinator.async_manual_session_saved()
-        assert coordinator._captcha_notification_sent is False
+        assert coordinator._captcha_notification_sent is True
+        assert coordinator._renotify_captcha is True
         coordinator.async_request_refresh.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -358,3 +359,46 @@ class TestESBDataUpdateCoordinator:
         assert coordinator2.mprn == "22222222222"
         assert "11111111111" in coordinator1.name
         assert "22222222222" in coordinator2.name
+
+
+class TestCaptchaRecoveryAfterManualPaste:
+    """A valid paste after a CAPTCHA must restore polling and dismiss the warning."""
+
+    @staticmethod
+    def _patched(coordinator):
+        coordinator._send_captcha_notification = AsyncMock()
+        coordinator._dismiss_captcha_notification = AsyncMock()
+        coordinator.async_request_refresh = AsyncMock()
+
+    @pytest.mark.asyncio
+    async def test_good_paste_restores_interval_and_dismisses(self, coordinator, mock_esb_api, mock_esb_data):
+        self._patched(coordinator)
+        mock_esb_api.fetch.side_effect = [CaptchaRequiredException("c"), mock_esb_data]
+        await coordinator._async_update_data()
+        assert coordinator.update_interval == timedelta(days=7)
+        await coordinator.async_manual_session_saved()
+        await coordinator._async_update_data()
+        assert coordinator.update_interval == timedelta(minutes=30)
+        coordinator._dismiss_captcha_notification.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_bad_paste_notifies_again(self, coordinator, mock_esb_api):
+        self._patched(coordinator)
+        mock_esb_api.fetch.side_effect = CaptchaRequiredException("c")
+        await coordinator._async_update_data()
+        await coordinator.async_manual_session_saved()
+        await coordinator._async_update_data()
+        assert coordinator._send_captcha_notification.await_count == 2
+        await coordinator._async_update_data()
+        assert coordinator._send_captcha_notification.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_configured_interval_restored_not_default(self, coordinator, mock_esb_api, mock_esb_data):
+        from custom_components.esb_smart_meter.const import DEFAULT_SCAN_INTERVAL
+
+        assert coordinator.update_interval != DEFAULT_SCAN_INTERVAL
+        self._patched(coordinator)
+        mock_esb_api.fetch.side_effect = [CaptchaRequiredException("c"), mock_esb_data]
+        await coordinator._async_update_data()
+        await coordinator._async_update_data()
+        assert coordinator.update_interval == timedelta(minutes=30)

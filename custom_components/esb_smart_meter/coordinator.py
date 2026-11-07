@@ -77,6 +77,9 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         self.esb_api = esb_api
         self.mprn = mprn
         self._captcha_notification_sent = False
+        # Set by a manual paste: notify again if ESB still shows a CAPTCHA
+        self._renotify_captcha = False
+        self._normal_interval = update_interval
         self.last_successful_update_time: datetime | None = None
         # (downloaded data, tariff fingerprint, split) shared by the band sensors of one update
         self.band_split: tuple[ESBData, str, "BandSplit"] | None = None
@@ -110,11 +113,12 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
                 return esb_data
 
             # Clear CAPTCHA notification flag on success
+            self._renotify_captcha = False
             if self._captcha_notification_sent:
                 _LOGGER.info("ESB data fetch successful, clearing CAPTCHA notification")
                 self._captcha_notification_sent = False
-                # Restore normal update interval
-                self.update_interval = DEFAULT_SCAN_INTERVAL
+                # Restore the configured update interval
+                self.update_interval = self._normal_interval
                 # Dismiss the notification
                 await self._dismiss_captcha_notification()
 
@@ -133,9 +137,10 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             # CAPTCHA detected - send notification and stop updates
             _LOGGER.warning("CAPTCHA detected for MPRN %s: %s", self.mprn, err)
 
-            if not self._captcha_notification_sent:
+            if not self._captcha_notification_sent or self._renotify_captcha:
                 await self._send_captcha_notification()
                 self._captcha_notification_sent = True
+                self._renotify_captcha = False
                 # Set update interval to 7 days to effectively stop polling
                 # (coordinator will still honor manual refresh requests)
                 _LOGGER.error(
@@ -175,7 +180,7 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
 
     async def async_manual_session_saved(self) -> None:
         """Try a newly pasted session now; if ESB rejects it too, notify the user again."""
-        self._captcha_notification_sent = False
+        self._renotify_captcha = True
         await self.async_request_refresh()
 
     async def _send_captcha_notification(self) -> None:
