@@ -168,6 +168,11 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             )
             raise UpdateFailed(f"Unexpected error: {err}") from err
 
+    async def async_manual_session_saved(self) -> None:
+        """Try a newly pasted session now; if ESB rejects it too, notify the user again."""
+        self._captcha_notification_sent = False
+        await self.async_request_refresh()
+
     async def _send_captcha_notification(self) -> None:
         """Send a persistent notification and create a repair issue when CAPTCHA is detected."""
         _LOGGER.info("Sending CAPTCHA notification and creating repair issue for MPRN %s", self.mprn)
@@ -205,7 +210,7 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
                     "**Alternative:** Wait 24-48 hours for automatic clearance.\n\n"
                     f"📋 MPRN: `{self.mprn}`\n\n"
                     "This notification will clear automatically once data retrieval succeeds.\n\n"
-                    "**Need help?** See the [CAPTCHA Setup Guide](https://github.com/your-repo/blob/master/CAPTCHA-SETUP.md) "
+                    "**Need help?** See the [CAPTCHA Setup Guide](https://github.com/antoine-voiry/home-assistant-esb-smart-meter-integration/blob/master/CAPTCHA-SETUP.md) "
                     "for advanced cookie extraction methods."
                 ),
             },

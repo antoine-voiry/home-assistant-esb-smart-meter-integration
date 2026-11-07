@@ -175,8 +175,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
                 session_manager = SessionManager(self.hass, mprn)
 
                 success = await session_manager.save_manual_cookies(
-                    cookie_string,
-                    user_agent=user_input.get(CONF_MANUAL_USER_AGENT, "").strip() or None,
+                    cookie_string, user_agent=user_input.get(CONF_MANUAL_USER_AGENT)
                 )
 
                 if success:
@@ -184,7 +183,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
                     if self._config_entry.state is config_entries.ConfigEntryState.LOADED:
                         # Use the new cookies now rather than after the CAPTCHA back-off interval
                         coordinator = self._config_entry.runtime_data.coordinator
-                        self.hass.async_create_task(coordinator.async_request_refresh())
+                        self.hass.async_create_task(coordinator.async_manual_session_saved())
                     return self.async_create_entry(title="", data=dict(self._config_entry.options))
 
                 _LOGGER.error("Failed to save manual cookies for MPRN %s", mprn)

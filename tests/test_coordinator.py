@@ -132,6 +132,14 @@ class TestESBDataUpdateCoordinator:
         await hass.async_block_till_done()
 
     @pytest.mark.asyncio
+    async def test_manual_session_saved_rearms_notification_and_refreshes(self, coordinator):
+        coordinator._captcha_notification_sent = True
+        coordinator.async_request_refresh = AsyncMock()
+        await coordinator.async_manual_session_saved()
+        assert coordinator._captcha_notification_sent is False
+        coordinator.async_request_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_network_error_client_error(self, coordinator, mock_esb_api, hass):
         """Test network ClientError is handled correctly."""
         # Setup persistent notification service
