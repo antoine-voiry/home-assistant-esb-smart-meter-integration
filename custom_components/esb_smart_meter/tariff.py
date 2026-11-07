@@ -187,37 +187,23 @@ def split_by_band(hourly_usage: Hourly, periods: list[TariffPeriod]) -> BandSpli
 
     Hours with no tariff period have no cost but still count, as day, in the usage bands.
     """
-    billing: dict[datetime, tuple[TariffPeriod | None, str]] = {}
-
-    def billing_at(hour: datetime) -> tuple[TariffPeriod | None, str]:
-        """Return (period, band) for an hour, computed once; no period counts as day."""
-        if hour not in billing:
-            local = hour.astimezone(DUBLIN_TZ)
-            period = _period_for(periods, local.date())
-            billing[hour] = (period, period.band_at(local) if period is not None else "day")
-        return billing[hour]
-
-    usage: dict[str, Hourly] = {band: [] for band in BANDS}
-    for hour, kwh in hourly_usage:
-        billed = billing_at(hour)[1]
-        for band in BANDS:
-            usage[band].append((hour, kwh if band == billed else 0.0))
-
+    # Same hours as usage_costs, so the band costs plus standing charges add up to it
+    billed_band: dict[datetime, str] = {}
     cost: dict[str, Hourly] = {band: [] for band in BANDS}
     standing: Hourly = []
-    if hourly_usage and periods:
-        kwh_by_hour = dict(hourly_usage)
-        first_start = datetime.combine(periods[0].effective_from, time(), DUBLIN_TZ).astimezone(timezone.utc)
-        hour = max(hourly_usage[0][0], first_start)
-        while hour <= hourly_usage[-1][0]:  # includes hours missing from the download
-            period, billed = billing_at(hour)
-            if period is not None:
-                rate = period.rate_for(billed)
-                kwh = kwh_by_hour.get(hour, 0.0)
-                for band in BANDS:
-                    cost[band].append((hour, kwh * rate if band == billed else 0.0))
-                standing.append((hour, period.standing_charge / 24))
-            hour += timedelta(hours=1)
+    for hour, local, period, kwh in _costed_hours(hourly_usage, periods):
+        billed = billed_band[hour] = period.band_at(local)
+        rate = period.rate_for(billed)
+        for band in BANDS:
+            cost[band].append((hour, kwh * rate if band == billed else 0.0))
+        standing.append((hour, period.standing_charge / 24))
+
+    # Every downloaded hour with a period is a costed hour; the rest count as day
+    usage: dict[str, Hourly] = {band: [] for band in BANDS}
+    for hour, kwh in hourly_usage:
+        billed = billed_band.get(hour, "day")
+        for band in BANDS:
+            usage[band].append((hour, kwh if band == billed else 0.0))
     return BandSplit(usage=usage, cost=cost, standing=standing)
 
 
