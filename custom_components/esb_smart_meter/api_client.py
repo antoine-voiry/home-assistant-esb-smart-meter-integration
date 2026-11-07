@@ -118,7 +118,7 @@ class ESBDataApi:
                 _LOGGER.debug("Request 1 final URL: %s", response.url)
                 _LOGGER.debug(
                     "Request 1 cookies set: %s",
-                    [f"{c.key}={c.value[:20]}..." for c in self._session.cookie_jar],
+                    [c.key for c in self._session.cookie_jar],
                 )
                 content = await response.text()
                 _LOGGER.debug("Request 1 response length: %d bytes", len(content))
@@ -220,7 +220,7 @@ class ESBDataApi:
             }
             _LOGGER.debug("Request 3: Confirming login")
             _LOGGER.debug("Request 3 URL: %s", confirm_url)
-            _LOGGER.debug("Request 3 params: %s", confirm_params)
+            _LOGGER.debug("Request 3 param keys: %s", list(confirm_params))
             async with self._session.get(
                 confirm_url,
                 params=confirm_params,

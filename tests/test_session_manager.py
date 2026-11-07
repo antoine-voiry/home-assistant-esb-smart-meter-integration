@@ -310,7 +310,7 @@ class TestSessionManager:
         readonly_dir.mkdir()
         session_manager._session_file = readonly_dir / "session.json"
 
-        with patch("builtins.open", side_effect=PermissionError("Permission denied")):
+        with patch("os.open", side_effect=PermissionError("Permission denied")):
             with pytest.raises(PermissionError):
                 session_manager._write_session_file(session_data)
 
@@ -470,6 +470,11 @@ class TestCheckSession:
     @pytest.mark.parametrize("status", [302, 401, 403])
     async def test_sent_to_login_is_rejected(self, mock_hass, status):
         http = self._http(status, "https://login.esbnetworks.ie/x?state=secret")
+        assert await SessionManager(mock_hass, "12345678901").check_session(http, "UA") is False
+
+    @pytest.mark.asyncio
+    async def test_malformed_location_header_does_not_raise(self, mock_hass):
+        http = self._http(302, "http://[bad")
         assert await SessionManager(mock_hass, "12345678901").check_session(http, "UA") is False
 
     @pytest.mark.asyncio
