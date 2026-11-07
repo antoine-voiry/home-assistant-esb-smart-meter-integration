@@ -39,6 +39,40 @@ def test_rate_bands_on_a_weekday(hour, expected):
     assert _period().rate_at(_local(2026, 10, 21, hour)) == expected  # Wednesday
 
 
+@pytest.mark.parametrize(
+    "hour, expected",
+    [(1, 0.20), (2, 0.09), (4, 0.09), (5, 0.20), (12, 0.30), (17, 0.40)],
+)
+def test_boost_window_takes_precedence_over_night(hour, expected):
+    period = _period(boost_rate=0.09, boost_start=2, boost_end=5)
+    assert period.rate_at(_local(2026, 10, 24, hour)) == expected  # Saturday: the window applies every day
+
+
+def test_boost_window_can_wrap_midnight():
+    period = _period(boost_rate=0.09, boost_start=23, boost_end=2)
+    assert [period.rate_at(_local(2026, 10, 21, h)) for h in (22, 23, 0, 1, 2)] == [0.30, 0.09, 0.09, 0.09, 0.20]
+
+
+def test_period_without_boost_keeps_its_stored_data_and_fingerprint():
+    data = _period().as_data()
+    assert not {"boost_rate", "boost_start", "boost_end"} & set(data)
+    assert TariffPeriod.from_data({**data, "boost_rate": None}) == _period()
+    assert fingerprint([_period()]) != fingerprint([_period(boost_rate=0.09)])
+
+
+def test_boost_round_trips_through_subentry_data():
+    period = _period(boost_rate=0.0996, boost_start=2, boost_end=5)
+    data = period.as_data()
+    assert (data["boost_rate"], data["boost_start"], data["boost_end"]) == (0.0996, 2, 5)
+    assert TariffPeriod.from_data({**data, "boost_start": 2.0, "boost_end": 5.0}) == period
+
+
+def test_usage_cost_uses_boost_rate_in_window():
+    hour = datetime(2026, 10, 21, 2, tzinfo=UTC)  # 03:00 IST
+    costs = usage_costs([(hour, 7.0)], [_period(boost_rate=0.09)])
+    assert costs == [(hour, pytest.approx(7.0 * 0.09 + 0.72 / 24))]
+
+
 def test_weekday_only_peak_is_day_rate_at_weekends():
     period = _period(peak_weekdays_only=True)
     assert period.rate_at(_local(2026, 10, 24, 17)) == 0.30  # Saturday
@@ -135,3 +169,12 @@ def test_validate_period_rejects_empty_bands_and_overlap():
     assert validate_period(_form(night_end=23), set())["night_end"] == "empty_band"
     assert validate_period(_form(peak_end=17), set())["peak_end"] == "empty_band"
     assert validate_period(_form(peak_start=6, peak_end=9), set()) == {"base": "peak_overlaps_night"}
+
+
+def test_validate_period_checks_the_boost_window_only_when_set():
+    assert validate_period(_form(boost_start=3, boost_end=3), set()) == {}  # no boost rate: ignored
+    assert validate_period(_form(boost_rate=0.09, boost_start=2, boost_end=5), set()) == {}
+    assert validate_period(_form(boost_rate=0.09, boost_start=3, boost_end=3), set()) == {"boost_end": "empty_band"}
+    assert validate_period(_form(boost_rate=0.09, boost_start=16, boost_end=18), set()) == {
+        "base": "boost_overlaps_peak"
+    }

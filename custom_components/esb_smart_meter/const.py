@@ -61,6 +61,10 @@ CONF_NIGHT_END = "night_end"
 CONF_PEAK_START = "peak_start"
 CONF_PEAK_END = "peak_end"
 CONF_PEAK_WEEKDAYS_ONLY = "peak_weekdays_only"
+# Optional cheap window, e.g. an EV night rate 02:00-05:00
+CONF_BOOST_RATE = "boost_rate"
+CONF_BOOST_START = "boost_start"
+CONF_BOOST_END = "boost_end"
 
 # Circuit breaker settings
 CIRCUIT_BREAKER_FAILURES = 3  # Open circuit after N failures

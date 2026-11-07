@@ -10,6 +10,9 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 
 from .const import (
+    CONF_BOOST_END,
+    CONF_BOOST_RATE,
+    CONF_BOOST_START,
     CONF_DAY_RATE,
     CONF_EFFECTIVE_FROM,
     CONF_EXPORT_RATE,
@@ -54,6 +57,10 @@ class TariffPeriod:
     peak_start: int = 17
     peak_end: int = 19
     peak_weekdays_only: bool = False
+    # Optional cheap window (e.g. an EV night rate 02:00-05:00), every day, ahead of the other bands
+    boost_rate: float | None = None
+    boost_start: int = 2
+    boost_end: int = 5
 
     @classmethod
     def from_data(cls, data: Mapping[str, Any]) -> "TariffPeriod":
@@ -70,16 +77,25 @@ class TariffPeriod:
             peak_start=int(data.get(CONF_PEAK_START, 17)),
             peak_end=int(data.get(CONF_PEAK_END, 19)),
             peak_weekdays_only=bool(data.get(CONF_PEAK_WEEKDAYS_ONLY, False)),
+            boost_rate=None if data.get(CONF_BOOST_RATE) in (None, "") else float(data[CONF_BOOST_RATE]),
+            boost_start=int(data.get(CONF_BOOST_START, 2)),
+            boost_end=int(data.get(CONF_BOOST_END, 5)),
         )
 
     def as_data(self) -> dict[str, Any]:
         """Return JSON-safe subentry data."""
         data = asdict(self)
         data[CONF_EFFECTIVE_FROM] = self.effective_from.isoformat()
+        if self.boost_rate is None:
+            # Leave periods without a boost window exactly as before (stored data and fingerprint)
+            for key in (CONF_BOOST_RATE, CONF_BOOST_START, CONF_BOOST_END):
+                del data[key]
         return data
 
     def rate_at(self, local: datetime) -> float:
         """Return the €/kWh import rate for an Irish local time."""
+        if self.boost_rate is not None and _in_band(local.hour, self.boost_start, self.boost_end):
+            return self.boost_rate
         if self._peak_applies_on(local) and _in_band(local.hour, self.peak_start, self.peak_end):
             return self.peak_rate
         if _in_band(local.hour, self.night_start, self.night_end):
@@ -157,4 +173,9 @@ def validate_period(data: Mapping[str, Any], other_dates: set[date]) -> dict[str
         period.night_start, period.night_end
     ):
         errors["base"] = "peak_overlaps_night"
+    if not errors and period.boost_rate is not None:
+        if period.boost_start == period.boost_end:
+            errors[CONF_BOOST_END] = "empty_band"
+        elif _band_hours(period.boost_start, period.boost_end) & _band_hours(period.peak_start, period.peak_end):
+            errors["base"] = "boost_overlaps_peak"
     return errors

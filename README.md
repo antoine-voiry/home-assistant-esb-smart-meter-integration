@@ -38,7 +38,7 @@ A comprehensive Home Assistant integration for monitoring your electricity usage
 - **🔐 Secure Authentication**: Handles ESB's complete 8-step OAuth2-like authentication flow
 - **🔑 Re-authentication**: If ESB rejects your password, Home Assistant asks for the new one instead of failing silently
 - **🩺 Diagnostics Download**: One-click diagnostics file for bug reports, with credentials and MPRN redacted
-- **💶 Cost Tracking**: Dated tariff periods (day / night / peak, standing charge, export rate) with SSE Airtricity and Bord Gáis presets; euro cost and export credit statistics for the Energy dashboard
+- **💶 Cost Tracking**: Dated tariff periods (day / night / peak, optional EV / boost window, standing charge, export rate) with SSE Airtricity and Bord Gáis presets; euro cost and export credit statistics for the Energy dashboard
 - **🗂️ Full History**: Imports everything ESB provides (about 2 years) on first run, then only recent days
 - **📱 Device Grouping**: All sensors grouped under a single device in Home Assistant UI
 - **🆔 Unique Entity IDs**: Proper entity management with MPRN-based unique identifiers
@@ -423,6 +423,9 @@ Add one **tariff period** per price change: **Settings** → **Devices & Service
    peak 17:00–19:00). **Check the rates against your bill** — they depend on your
    discount, and suppliers change prices often.
 2. Set the **start date** and rates. Rates include VAT, as on your bill.
+   If your plan has an extra cheap window every day, such as an EV night rate
+   (for example 02:00–05:00), fill in the optional **EV / boost rate** and its hours.
+   All usage in that window is costed at that rate, ahead of the night rate.
 3. When prices change, add another period starting on the change date. Each hour is
    costed with the period in force on that day; hours before your first period get no cost.
 
