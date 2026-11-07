@@ -23,6 +23,7 @@ from custom_components.esb_smart_meter.sensor import (
     BandCostSensor,
     BandUsageSensor,
     BaseBandSensor,
+    StandingChargeEnergySensor,
     StandingChargeSensor,
     ApiStatusSensor,
     CircuitBreakerStatusSensor,
@@ -1205,7 +1206,6 @@ class TestBandBreakdownSensors:
         assert by_key["usage_day_total"].entity_id == "sensor.esb_electricity_usage_day_total"
 
 
-
 class TestBandSplitCache:
     """The 9 band sensors of one coordinator share one split per update."""
 
@@ -1241,11 +1241,31 @@ class TestBandSplitCache:
             band_sensors[1]._hourly(esb_data=ESBData(data=[]))
         assert split.call_count == 2
 
-    def test_standing_charge_energy_is_not_recosted_on_tariff_change(self):
-        from custom_components.esb_smart_meter.sensor import BaseCostSensor, StandingChargeEnergySensor
+    def test_split_is_recomputed_when_the_tariff_changes(self):
+        band_sensors, esb_data = self._sensors_and_data()
+        sensor = band_sensors[len(BANDS)]  # BandCostSensor for "day"
+        with patch(
+            "custom_components.esb_smart_meter.sensor.split_by_band", wraps=sensor_module.split_by_band
+        ) as split:
+            first = sensor._hourly(esb_data=esb_data)
+            sensor._entry.subentries["0"].data = TestCostSensors.PERIOD.as_data() | {"day_rate": 0.5, "night_rate": 0.5}
+            second = sensor._hourly(esb_data=esb_data)
+        assert split.call_count == 2
+        assert first != second
 
-        assert not issubclass(StandingChargeEnergySensor, BaseCostSensor)
-        sensor = StandingChargeEnergySensor(
-            coordinator=TestCostSensors._coordinator(), mprn="12345678901", entry=TestCostSensors._entry()
-        )
-        assert sensor.entity_registry_visible_default is False
+    @pytest.mark.asyncio
+    async def test_standing_charge_energy_is_not_recosted_on_tariff_change(self):
+        helper = TestCostSensors
+        kwargs = dict(coordinator=helper._coordinator(), mprn="12345678901", entry=helper._entry(helper.PERIOD))
+        energy = StandingChargeEnergySensor(**kwargs)
+        charge = StandingChargeSensor(**kwargs)
+        hourly = energy._hourly(esb_data=kwargs["coordinator"].data)
+        assert hourly
+        stored = {hour for hour, _ in hourly}
+        for sensor in (energy, charge):
+            sensor.hass = MagicMock()
+        with patch(
+            "custom_components.esb_smart_meter.sensor.ImportState", return_value=helper._state("stale", None)
+        ):
+            assert await energy._needs_full_import(hourly, stored) is False
+            assert await charge._needs_full_import(hourly, stored) is True
