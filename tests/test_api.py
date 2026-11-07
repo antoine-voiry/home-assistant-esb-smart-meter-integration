@@ -234,7 +234,7 @@ class TestESBDataApi:
         with patch.object(
             esb_api,
             "_ESBDataApi__login",
-            return_value={"download_token": "test-token", "user_agent": "test-ua"},
+            return_value={"download_token": "test-token", "user_agent": "test-ua", "source": "login", "cookies": {}},
         ):
             with patch.object(esb_api, "_ESBDataApi__fetch_data", return_value=sample_csv_data):
                 with patch.object(

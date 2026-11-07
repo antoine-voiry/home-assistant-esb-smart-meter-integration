@@ -110,6 +110,7 @@ class TestCachedManualSession:
             patch.object(sm, "load_session", AsyncMock(return_value=cached)),
             patch.object(sm, "check_session", AsyncMock(return_value=True)),
             patch.object(sm, "load_cookies_to_jar"),
+            patch.object(sm, "extract_cookies_from_jar", return_value={"c": "renewed"}),
             patch.object(sm, "save_session", AsyncMock(return_value=True)) as save,
             patch("custom_components.esb_smart_meter.api_client.asyncio.sleep", AsyncMock()),
         ):
@@ -120,6 +121,7 @@ class TestCachedManualSession:
             "user_agent": BROWSER_UA,
             "source": SESSION_SOURCE_MANUAL,
             "token_from_cache": False,
+            "cookies": {"c": "renewed"},
         }
         urls = [c.args[0] for c in esb_api._session.get.call_args_list]
         assert urls == [ESB_CONSUMPTION_URL, ESB_TOKEN_URL]
@@ -149,6 +151,8 @@ class TestCachedManualSession:
         ):
             result = await esb_api._ESBDataApi__login()
         assert result["download_token"] == "kept"
+        assert result["token_from_cache"] is True
+        assert result["cookies"] == {"c": "1"}
         esb_api._session.get.assert_not_called()
 
     @pytest.mark.asyncio
@@ -427,6 +431,45 @@ class TestStaleDownloadToken:
             with pytest.raises(aiohttp.ClientResponseError):
                 await esb_api.fetch()
         renew.assert_not_awaited()
+
+
+class TestRenewedCookiesAreSaved:
+    """Cookies ESB re-issues during a poll must reach the session file (sliding expiration)."""
+
+    @staticmethod
+    def _login(cookies):
+        return {
+            "download_token": "tok",
+            "user_agent": BROWSER_UA,
+            "source": SESSION_SOURCE_MANUAL,
+            "token_from_cache": True,
+            "cookies": cookies,
+        }
+
+    async def _fetch(self, esb_api, saved, jar):
+        sm = esb_api._session_manager
+        with (
+            patch.object(esb_api, "_ESBDataApi__login", AsyncMock(return_value=self._login(saved))),
+            patch.object(esb_api, "_ESBDataApi__fetch_data", AsyncMock(return_value="csv")),
+            patch.object(esb_api, "_ESBDataApi__csv_to_dict", return_value=[]),
+            patch.object(sm, "extract_cookies_from_jar", return_value=jar),
+            patch.object(sm, "save_session", AsyncMock(return_value=True)) as save,
+        ):
+            esb_api._hass.async_add_executor_job = AsyncMock(return_value=[])
+            await esb_api.fetch()
+        return save
+
+    @pytest.mark.asyncio
+    async def test_changed_jar_is_saved(self, esb_api):
+        save = await self._fetch(esb_api, {"c": "old"}, {"c": "new"})
+        save.assert_awaited_once_with(
+            cookies={"c": "new"}, user_agent=BROWSER_UA, download_token="tok", source=SESSION_SOURCE_MANUAL
+        )
+
+    @pytest.mark.asyncio
+    async def test_unchanged_jar_is_not_saved(self, esb_api):
+        save = await self._fetch(esb_api, {"c": "same"}, {"c": "same"})
+        save.assert_not_awaited()
 
 
 class TestRejectionMarkerLifetime:

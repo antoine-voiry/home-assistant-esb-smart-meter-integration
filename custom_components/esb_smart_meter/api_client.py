@@ -350,6 +350,7 @@ class ESBDataApi:
                 "user_agent": user_agent,
                 "source": SESSION_SOURCE_LOGIN,
                 "token_from_cache": False,
+                "cookies": cookies,
             }
 
         except CaptchaRequiredException:
@@ -397,16 +398,20 @@ class ESBDataApi:
         self._current_user_agent = user_agent
         download_token = cached.get("download_token")
         token_from_cache = bool(download_token)
+        saved_cookies = cached.get("cookies", {})
         if not download_token:
             # A pasted session has cookies but no token: get one with those cookies,
             # exactly as the full login does after signin (requests 6-7; check_session was request 5).
             _LOGGER.info("Cached session has no download token, requesting one")
             download_token = await self.__renew_download_token(user_agent, source, account_page_loaded=True)
+            # __renew_download_token just saved the jar as it is now
+            saved_cookies = self._session_manager.extract_cookies_from_jar(self._session.cookie_jar)
         return {
             "download_token": download_token,
             "user_agent": user_agent,
             "source": source,
             "token_from_cache": token_from_cache,
+            "cookies": saved_cookies,
         }
 
     async def __renew_download_token(self, user_agent: str, source: str, *, account_page_loaded: bool) -> str:
@@ -639,6 +644,16 @@ class ESBDataApi:
                 )
                 csv_data = await self.__fetch_data(download_token, user_agent)
             data = await self._hass.async_add_executor_job(self.__csv_to_dict, csv_data)
+
+            # ESB accepted the session: keep the cookies it renewed (sliding expiration)
+            jar_cookies = self._session_manager.extract_cookies_from_jar(self._session.cookie_jar)
+            if jar_cookies != auth_result.get("cookies"):
+                await self._session_manager.save_session(
+                    cookies=jar_cookies,
+                    user_agent=user_agent,
+                    download_token=download_token,
+                    source=auth_result["source"],
+                )
 
             # Success! Record in circuit breaker
             self._circuit_breaker.record_success()
