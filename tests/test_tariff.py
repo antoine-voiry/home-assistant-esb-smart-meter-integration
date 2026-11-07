@@ -55,6 +55,11 @@ def test_boost_window_can_wrap_midnight():
     assert [period.rate_at(_local(2026, 10, 21, h)) for h in (22, 23, 0, 1, 2)] == [0.30, 0.09, 0.09, 0.09, 0.20]
 
 
+def test_rate_for_returns_each_bands_rate():
+    period = _period(boost_rate=0.09)
+    assert {band: period.rate_for(band) for band in BANDS} == {"day": 0.30, "night": 0.20, "peak": 0.40, "boost": 0.09}
+
+
 def test_period_without_boost_keeps_its_stored_data_and_fingerprint():
     data = _period().as_data()
     assert not {"boost_rate", "boost_start", "boost_end"} & set(data)
@@ -229,7 +234,6 @@ def test_split_of_nothing_is_empty():
     split = split_by_band([], [_period()])
     assert all(split.usage[b] == [] and split.cost[b] == [] for b in BANDS) and split.standing == []
     assert split_by_band([(datetime(2026, 1, 1, tzinfo=UTC), 1.0)], []).standing == []
-
 
 
 def test_band_priced_at_the_day_rate_counts_as_day():

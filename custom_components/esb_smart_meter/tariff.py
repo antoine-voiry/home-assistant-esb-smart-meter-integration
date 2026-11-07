@@ -114,8 +114,11 @@ class TariffPeriod:
 
     def rate_at(self, local: datetime) -> float:
         """Return the €/kWh import rate for an Irish local time."""
-        rate = getattr(self, f"{self.band_at(local)}_rate")
-        return float(rate)
+        return self.rate_for(self.band_at(local))
+
+    def rate_for(self, band: str) -> float:
+        """Return the €/kWh import rate of a band."""
+        return float(getattr(self, f"{band}_rate"))
 
     def _peak_applies_on(self, local: datetime) -> bool:
         """Return False at weekends for a weekday-only peak."""
@@ -195,7 +198,7 @@ def split_by_band(hourly_usage: Hourly, periods: list[TariffPeriod]) -> BandSpli
     standing: Hourly = []
     for hour, local, period, kwh in _costed_hours(hourly_usage, periods):
         billed = period.band_at(local)
-        rate = float(getattr(period, f"{billed}_rate"))
+        rate = period.rate_for(billed)
         for band in BANDS:
             cost[band].append((hour, kwh * rate if band == billed else 0.0))
         standing.append((hour, period.standing_charge / 24))
