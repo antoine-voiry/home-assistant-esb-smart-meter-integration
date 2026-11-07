@@ -393,6 +393,16 @@ class TestCaptchaRecoveryAfterManualPaste:
         assert coordinator._send_captcha_notification.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_empty_download_after_captcha_still_restores(self, coordinator, mock_esb_api):
+        """An empty but successful fetch proves the login works: leave the CAPTCHA back-off too."""
+        self._patched(coordinator)
+        mock_esb_api.fetch.side_effect = [CaptchaRequiredException("c"), Mock(_data=[])]
+        await coordinator._async_update_data()
+        await coordinator._async_update_data()
+        assert coordinator.update_interval == timedelta(minutes=30)
+        coordinator._dismiss_captcha_notification.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_configured_interval_restored_not_default(self, coordinator, mock_esb_api, mock_esb_data):
         from custom_components.esb_smart_meter.const import DEFAULT_SCAN_INTERVAL
 

@@ -106,13 +106,7 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             if esb_data is None:
                 raise UpdateFailed("No data returned from ESB API")
 
-            # Validate that we have some data
-            if not hasattr(esb_data, "_data") or len(esb_data._data) == 0:
-                _LOGGER.warning("ESB returned empty dataset for MPRN %s", self.mprn)
-                # Don't fail completely, return empty data to avoid breaking sensors
-                return esb_data
-
-            # Clear CAPTCHA notification flag on success
+            # Any successful fetch, even an empty one, means login works: leave the CAPTCHA back-off
             self._renotify_captcha = False
             if self._captcha_notification_sent:
                 _LOGGER.info("ESB data fetch successful, clearing CAPTCHA notification")
@@ -121,6 +115,12 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
                 self.update_interval = self._normal_interval
                 # Dismiss the notification
                 await self._dismiss_captcha_notification()
+
+            # Validate that we have some data
+            if not hasattr(esb_data, "_data") or len(esb_data._data) == 0:
+                _LOGGER.warning("ESB returned empty dataset for MPRN %s", self.mprn)
+                # Don't fail completely, return empty data to avoid breaking sensors
+                return esb_data
 
             _LOGGER.debug(
                 "Successfully fetched ESB data: today=%.2f kWh, last_30_days=%.2f kWh",

@@ -467,6 +467,19 @@ class TestRejectionMarkerLifetime:
         assert datetime.fromisoformat(saved["expires_at"]) >= dt_util.utcnow() + timedelta(hours=23)
 
     @pytest.mark.asyncio
+    async def test_marker_without_expiry_lasts_the_cooldown(self, tmp_path):
+        from datetime import datetime, timedelta
+
+        from homeassistant.util import dt as dt_util
+
+        sm = self._sm(tmp_path)
+        await sm._async_ensure_storage()
+        await sm.mark_rejected({"cookies": {"c": "1"}, "mprn": "12345678901", "source": SESSION_SOURCE_MANUAL})
+        saved = await sm.load_session()
+        assert saved is not None and sm.rejection_active(saved)
+        assert datetime.fromisoformat(saved["expires_at"]) >= dt_util.utcnow() + timedelta(hours=23)
+
+    @pytest.mark.asyncio
     async def test_unparsable_rejected_at_is_not_active(self, tmp_path):
         assert self._sm(tmp_path).rejection_active({"rejected_at": "garbage"}) is False
 
