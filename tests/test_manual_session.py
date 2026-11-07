@@ -358,3 +358,40 @@ class TestRejectedPasteMarker:
         saved = await sm.load_session()
         assert saved["cookies"] == {"c": "1"} and saved["download_token"] is None
         assert sm.rejection_active(saved) is True
+
+
+class TestStaleDownloadToken:
+    @staticmethod
+    def _refused(status):
+        import aiohttp
+
+        return aiohttp.ClientResponseError(MagicMock(), (), status=status)
+
+    @pytest.mark.asyncio
+    async def test_refused_cached_token_is_renewed_once(self, esb_api):
+        login = {"download_token": "old", "user_agent": BROWSER_UA, "source": SESSION_SOURCE_LOGIN, "token_from_cache": True}
+        with (
+            patch.object(esb_api, "_ESBDataApi__login", AsyncMock(return_value=login)),
+            patch.object(esb_api, "_ESBDataApi__fetch_data", AsyncMock(side_effect=[self._refused(400), "csv"])) as data,
+            patch.object(esb_api, "_ESBDataApi__renew_download_token", AsyncMock(return_value="new")) as renew,
+            patch.object(esb_api, "_ESBDataApi__csv_to_dict", return_value=[]),
+        ):
+            esb_api._hass.async_add_executor_job = AsyncMock(return_value=[])
+            await esb_api.fetch()
+        renew.assert_awaited_once_with(BROWSER_UA, SESSION_SOURCE_LOGIN, account_page_loaded=False)
+        assert data.await_args_list[1].args == ("new", BROWSER_UA)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("from_cache, status", [(False, 400), (True, 429), (True, 503)])
+    async def test_other_failures_are_not_retried(self, esb_api, from_cache, status):
+        import aiohttp
+
+        login = {"download_token": "t", "user_agent": BROWSER_UA, "source": SESSION_SOURCE_LOGIN, "token_from_cache": from_cache}
+        with (
+            patch.object(esb_api, "_ESBDataApi__login", AsyncMock(return_value=login)),
+            patch.object(esb_api, "_ESBDataApi__fetch_data", AsyncMock(side_effect=self._refused(status))),
+            patch.object(esb_api, "_ESBDataApi__renew_download_token", AsyncMock()) as renew,
+        ):
+            with pytest.raises(aiohttp.ClientResponseError):
+                await esb_api.fetch()
+        renew.assert_not_awaited()

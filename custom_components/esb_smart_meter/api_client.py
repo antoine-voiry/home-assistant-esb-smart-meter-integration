@@ -626,7 +626,18 @@ class ESBDataApi:
                 raise ValueError("Authentication succeeded but no download token received")
 
             _LOGGER.debug("Proceeding with data download after successful authentication")
-            csv_data = await self.__fetch_data(download_token, user_agent)
+            try:
+                csv_data = await self.__fetch_data(download_token, user_agent)
+            except aiohttp.ClientResponseError as err:
+                # A saved token can outlive what ESB accepts (e.g. one from before ESB moved
+                # its pages): get a fresh one once rather than failing every poll until expiry.
+                if not auth_result.get("token_from_cache") or err.status == 429 or not 400 <= err.status < 500:
+                    raise
+                _LOGGER.info("ESB refused the saved download token (HTTP %d), requesting a new one", err.status)
+                download_token = await self.__renew_download_token(
+                    user_agent, auth_result["source"], account_page_loaded=False
+                )
+                csv_data = await self.__fetch_data(download_token, user_agent)
             data = await self._hass.async_add_executor_job(self.__csv_to_dict, csv_data)
 
             # Success! Record in circuit breaker
