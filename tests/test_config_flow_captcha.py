@@ -124,7 +124,7 @@ class TestOptionsFlow:
             result = await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: cookie_string})
 
             assert result["type"] == "create_entry"
-            mock_session.save_manual_cookies.assert_called_once_with(cookie_string)
+            mock_session.save_manual_cookies.assert_called_once_with(cookie_string, user_agent=None)
 
     @pytest.mark.asyncio
     async def test_manual_cookies_keeps_existing_options(self, mock_hass, mock_config_entry):

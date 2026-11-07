@@ -12,6 +12,7 @@ from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
     CONF_MANUAL_COOKIES,
+    CONF_MANUAL_USER_AGENT,
     CONF_MPRN,
     CONF_PASSWORD,
     CONF_UPDATE_INTERVAL,
@@ -173,7 +174,10 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
                 mprn = self._config_entry.data[CONF_MPRN]
                 session_manager = SessionManager(self.hass, mprn)
 
-                success = await session_manager.save_manual_cookies(cookie_string)
+                success = await session_manager.save_manual_cookies(
+                    cookie_string,
+                    user_agent=user_input.get(CONF_MANUAL_USER_AGENT, "").strip() or None,
+                )
 
                 if success:
                     _LOGGER.info("Manual cookies saved successfully for MPRN %s", mprn)
@@ -189,6 +193,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_MANUAL_COOKIES): str,
+                vol.Optional(CONF_MANUAL_USER_AGENT, default=""): str,
             }
         )
 
@@ -198,12 +203,14 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
             errors=errors,
             description_placeholders={
                 "cookie_instructions": (
-                    "1. Open https://myaccount.esbnetworks.ie in your browser\n"
-                    "2. Log in (solve CAPTCHA if needed)\n"
-                    "3. Open browser DevTools (F12)\n"
-                    "4. Go to Console tab\n"
-                    "5. Type: document.cookie\n"
-                    "6. Copy the entire output and paste below"
+                    "1. Open https://myaccount.esbnetworks.ie in your browser and log in "
+                    "(solve the CAPTCHA if asked)\n"
+                    "2. Open DevTools (F12), go to the Network tab and reload the page\n"
+                    "3. Click the first request to myaccount.esbnetworks.ie\n"
+                    "4. Under Request Headers, copy the whole Cookie value into the first field\n"
+                    "5. From the same request, copy the User-Agent value into the second field\n\n"
+                    "document.cookie does NOT work: ESB's login cookies are HttpOnly and "
+                    "invisible to it."
                 )
             },
         )

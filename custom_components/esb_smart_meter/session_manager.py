@@ -12,7 +12,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from yarl import URL
 
+from .user_agents import USER_AGENTS
 from .const import (
+    SESSION_SOURCE_LOGIN,
+    SESSION_SOURCE_MANUAL,
     DOMAIN,
     SESSION_EXPIRY_HOURS,
     SESSION_FILE_NAME,
@@ -43,11 +46,17 @@ class SessionManager:
         self._hass = hass
         self._mprn = mprn
         
-        path_val = hass.config.path(DOMAIN)
+        # The session file holds live ESB login cookies, so it lives under .storage/, which
+        # config-backup tools (git-based ones especially) exclude. Until this change it was
+        # <config>/esb_smart_meter/, which a git-synced /config commits and pushes.
+        path_val = hass.config.path(".storage", DOMAIN)
+        legacy_val = hass.config.path(DOMAIN)
+        legacy_path = None
         if type(path_val).__name__ in ("Mock", "MagicMock", "AsyncMock") or "MagicMock" in str(path_val):
             self._storage_path = Path(".tmp/mock_esb_smart_meter")
         else:
             self._storage_path = Path(str(path_val))
+            legacy_path = Path(str(legacy_val))
 
         mprn_str = str(mprn)
         if "Mock" in mprn_str:
@@ -60,6 +69,21 @@ class SessionManager:
             self._storage_path.mkdir(parents=True, exist_ok=True)
         except (OSError, PermissionError) as err:
             _LOGGER.debug("Could not create storage directory: %s", err)
+
+        if legacy_path is not None and legacy_path != self._storage_path:
+            self._move_legacy_session(legacy_path / self._session_file.name)
+
+    def _move_legacy_session(self, legacy_file: Path) -> None:
+        """Move a session file out of the old, backup-visible location."""
+        try:
+            if legacy_file.exists():
+                if self._session_file.exists():
+                    legacy_file.unlink()
+                else:
+                    legacy_file.replace(self._session_file)
+                _LOGGER.info("Moved ESB session cache out of %s", legacy_file.parent)
+        except OSError as err:
+            _LOGGER.warning("Could not move legacy session cache %s: %s", legacy_file, err)
 
     async def load_session(self) -> dict[str, Any] | None:
         """Load a previously saved session from disk.
@@ -108,6 +132,7 @@ class SessionManager:
         cookies: dict[str, str],
         user_agent: str,
         download_token: str | None = None,
+        source: str = SESSION_SOURCE_LOGIN,
     ) -> bool:
         """Save session data to disk for reuse.
 
@@ -115,6 +140,7 @@ class SessionManager:
             cookies: Session cookies to save
             user_agent: User agent string used for this session
             download_token: Optional download token (if available)
+            source: SESSION_SOURCE_LOGIN or SESSION_SOURCE_MANUAL (pasted by the user)
 
         Returns:
             True if the session was written to disk
@@ -131,6 +157,7 @@ class SessionManager:
                 "created_at": now.isoformat(),
                 "expires_at": expires_at.isoformat(),
                 "mprn": self._mprn,
+                "source": source,
             }
 
             await self._hass.async_add_executor_job(self._write_session_file, session_data)
@@ -236,6 +263,13 @@ class SessionManager:
                 allow_redirects=False,  # Don't follow redirects to login
             ) as response:
                 status = response.status
+                redirect_host = "-"
+                if status != 200:
+                    # Host only: the full Location carries OIDC state/nonce parameters.
+                    try:
+                        redirect_host = URL(str(response.headers.get("Location", ""))).host or "-"
+                    except Exception:  # noqa: BLE001 - diagnostics must never fail validation
+                        pass
 
             await session.close()
 
@@ -244,7 +278,13 @@ class SessionManager:
                 _LOGGER.debug("Session validation successful - received 200 response")
                 return True
 
-            _LOGGER.debug("Session validation failed - received %d response", status)
+            # WARNING, not DEBUG: this is the only line that says WHY a session was rejected.
+            # A 302 to login.esbnetworks.ie means the login cookie was not among those sent.
+            _LOGGER.warning(
+                "Session validation failed - ESB answered HTTP %d (redirect host: %s)",
+                status,
+                redirect_host,
+            )
             return False
 
         except Exception as err:
@@ -290,11 +330,12 @@ class SessionManager:
 
         _LOGGER.debug("Loaded %d cookies to jar", len(cookies))
 
-    async def save_manual_cookies(self, cookie_string: str) -> bool:
+    async def save_manual_cookies(self, cookie_string: str, user_agent: str | None = None) -> bool:
         """Save manually provided cookies from user (for CAPTCHA bypass).
 
         Args:
-            cookie_string: Raw cookie string from browser
+            cookie_string: The browser's Cookie request header (``name=value; ...``)
+            user_agent: The browser's User-Agent; the session is replayed with it
 
         Returns:
             True if cookies were parsed and saved successfully
@@ -306,11 +347,13 @@ class SessionManager:
                 _LOGGER.error("No cookies parsed from provided string")
                 return False
 
-            # Save with default user agent (user can update if needed)
+            # Replay with the browser's own User-Agent when given; otherwise a complete,
+            # real one (the old default was a truncated string no browser sends).
             saved = await self.save_session(
                 cookies=cookies,
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                user_agent=(user_agent or "").strip() or USER_AGENTS[0],
                 download_token=None,
+                source=SESSION_SOURCE_MANUAL,
             )
             if not saved:
                 return False
@@ -333,8 +376,11 @@ class SessionManager:
         """
         cookies = {}
 
-        # Handle both formats: "name=value; name2=value2" and document.cookie format
-        cookie_string = cookie_string.strip()
+        # The Cookie request header ("name=value; name2=value2"), with or without its
+        # "Cookie:" name, possibly wrapped over several lines by the copy.
+        cookie_string = " ".join(cookie_string.split())
+        if cookie_string.lower().startswith("cookie:"):
+            cookie_string = cookie_string[len("cookie:") :]
 
         for part in cookie_string.split(";"):
             part = part.strip()
