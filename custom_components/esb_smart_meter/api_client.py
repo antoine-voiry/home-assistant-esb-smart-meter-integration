@@ -368,7 +368,6 @@ class ESBDataApi:
 
     async def __resume_session(self, cached: dict[str, Any]) -> dict[str, Any] | None:
         """Reuse a saved session. None means it was rejected and a full login may follow."""
-        _LOGGER.info("Using cached session, skipping login")
         user_agent = cached.get("user_agent", "")
         source = cached.get("source", SESSION_SOURCE_LOGIN)
         if cached.get("rejected_at"):
@@ -376,6 +375,7 @@ class ESBDataApi:
                 raise CaptchaRequiredException(_PASTE_REJECTED)
             await self._session_manager.clear_session()
             return None
+        _LOGGER.info("Using cached session, skipping login")
         self._session_manager.load_cookies_to_jar(self._session.cookie_jar, cached.get("cookies", {}))
         # Network errors and ESB outages propagate: they say nothing about the cookies
         if not await self._session_manager.check_session(self._session, user_agent):

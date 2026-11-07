@@ -99,6 +99,10 @@ class SessionManager:
                 else:
                     legacy_file.replace(self._session_file)
                 _LOGGER.info("Moved ESB session cache out of %s", legacy_file.parent)
+                try:
+                    legacy_file.parent.rmdir()
+                except OSError:
+                    pass  # not empty: other files live there
         except OSError as err:
             _LOGGER.warning("Could not move legacy session cache %s: %s", legacy_file, err)
 

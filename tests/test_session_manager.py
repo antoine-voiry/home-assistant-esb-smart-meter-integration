@@ -173,14 +173,13 @@ class TestSessionManager:
 
     @pytest.mark.asyncio
     async def test_clear_session(self, session_manager):
-        """Test clearing session."""
-        mock_file = Mock()
-        session_manager._session_file = mock_file
-        session_manager._storage_ready = True
+        """Clearing removes the session file from disk."""
+        await session_manager._async_ensure_storage()
+        session_manager._session_file.write_text("{}")
 
-        with patch.object(session_manager._hass, "async_add_executor_job") as mock_job:
-            await session_manager.clear_session()
-            mock_job.assert_called_once()
+        await session_manager.clear_session()
+
+        assert not session_manager._session_file.exists()
 
     def test_extract_cookies_from_jar(self, session_manager):
         """Test extracting cookies from cookie jar."""
@@ -449,6 +448,46 @@ class TestCaptchaRequiredException:
         exc = CaptchaRequiredException()
         assert "CAPTCHA verification required" in str(exc)
         assert exc.requires_user_action is True
+
+
+class TestLegacyMove:
+    @staticmethod
+    def _sm(tmp_path):
+        hass = Mock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
+        return SessionManager(hass, "12345678901")
+
+    def test_failed_move_is_logged_not_raised(self, tmp_path, caplog):
+        sm = self._sm(tmp_path)
+        legacy = sm._legacy_file
+        legacy.parent.mkdir()
+        legacy.write_text("{}")
+        sm._storage_path.mkdir(parents=True)
+        with patch.object(Path, "replace", side_effect=OSError("busy")):
+            sm._move_legacy_session(legacy)
+        assert "Could not move legacy session cache" in caplog.text
+        assert legacy.exists()
+
+    def test_empty_legacy_directory_is_removed(self, tmp_path):
+        sm = self._sm(tmp_path)
+        legacy = sm._legacy_file
+        legacy.parent.mkdir()
+        legacy.write_text("{}")
+        sm._storage_path.mkdir(parents=True)
+        sm._move_legacy_session(legacy)
+        assert sm._session_file.exists()
+        assert not legacy.parent.exists()
+
+    def test_legacy_directory_with_other_files_is_kept(self, tmp_path):
+        sm = self._sm(tmp_path)
+        legacy = sm._legacy_file
+        legacy.parent.mkdir()
+        legacy.write_text("{}")
+        (legacy.parent / "session_cache_other.json").write_text("{}")
+        sm._storage_path.mkdir(parents=True)
+        sm._move_legacy_session(legacy)
+        assert sm._session_file.exists()
+        assert legacy.parent.exists()
 
 
 class TestCheckSession:

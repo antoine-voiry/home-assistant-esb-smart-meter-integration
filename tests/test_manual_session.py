@@ -197,6 +197,34 @@ class TestCachedManualSession:
                 await esb_api._ESBDataApi__login()
 
 
+class TestResumeSessionDetails:
+    @pytest.mark.asyncio
+    async def test_rejected_session_clears_the_http_cookie_jar(self, esb_api):
+        cached = {"cookies": {"c": "1"}, "user_agent": BROWSER_UA, "download_token": "old", "source": SESSION_SOURCE_LOGIN}
+        sm = esb_api._session_manager
+        esb_api._session.get = MagicMock(side_effect=RuntimeError("login attempted"))
+        with (
+            patch.object(sm, "load_session", AsyncMock(return_value=cached)),
+            patch.object(sm, "check_session", AsyncMock(return_value=False)),
+            patch.object(sm, "clear_session", AsyncMock()),
+        ):
+            with pytest.raises(RuntimeError, match="login attempted"):
+                await esb_api._ESBDataApi__login()
+        esb_api._session.cookie_jar.clear.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_no_reuse_message_during_a_rejection_cooldown(self, esb_api, caplog):
+        caplog.set_level("INFO")
+        cached = {
+            "cookies": {"c": "1"}, "user_agent": BROWSER_UA, "source": SESSION_SOURCE_MANUAL,
+            "rejected_at": dt_util.utcnow().isoformat(),
+        }
+        with patch.object(esb_api._session_manager, "load_session", AsyncMock(return_value=cached)):
+            with pytest.raises(CaptchaRequiredException):
+                await esb_api._ESBDataApi__login()
+        assert "Using cached session" not in caplog.text
+
+
 class TestSessionLocation:
     """The session file holds login cookies: it must not live where a /config backup commits."""
 
@@ -436,6 +464,22 @@ class TestStaleDownloadToken:
         renew.assert_not_awaited()
 
 
+class TestRenewedTokenAlsoRefused:
+    @pytest.mark.asyncio
+    async def test_second_refusal_propagates_after_one_renewal(self, esb_api):
+        login = {"download_token": "old", "user_agent": BROWSER_UA, "source": SESSION_SOURCE_LOGIN, "token_from_cache": True}
+        refused = [TestStaleDownloadToken._refused(400), TestStaleDownloadToken._refused(403)]
+        with (
+            patch.object(esb_api, "_ESBDataApi__login", AsyncMock(return_value=login)),
+            patch.object(esb_api, "_ESBDataApi__fetch_data", AsyncMock(side_effect=refused)),
+            patch.object(esb_api, "_ESBDataApi__renew_download_token", AsyncMock(return_value="new")) as renew,
+        ):
+            with pytest.raises(aiohttp.ClientResponseError) as exc:
+                await esb_api.fetch()
+        renew.assert_awaited_once()
+        assert exc.value is refused[1]
+
+
 class TestRenewedCookiesAreSaved:
     """Cookies ESB re-issues during a poll must reach the session file (sliding expiration)."""
 
@@ -516,6 +560,10 @@ class TestRejectionMarkerLifetime:
     @pytest.mark.asyncio
     async def test_unparsable_rejected_at_is_not_active(self, tmp_path):
         assert self._sm(tmp_path).rejection_active({"rejected_at": "garbage"}) is False
+
+    @pytest.mark.parametrize("session", [{}, {"rejected_at": None}])
+    def test_no_rejection_recorded_is_not_active(self, tmp_path, session):
+        assert self._sm(tmp_path).rejection_active(session) is False
 
     @pytest.mark.asyncio
     async def test_session_file_is_owner_only(self, tmp_path):
