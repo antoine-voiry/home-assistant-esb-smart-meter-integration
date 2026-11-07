@@ -425,7 +425,7 @@ Add one **tariff period** per price change: **Settings** → **Devices & Service
 2. Set the **start date** and rates. Rates include VAT, as on your bill.
    If your plan has an extra cheap window every day, such as an EV night rate
    (for example 02:00–05:00), fill in the optional **EV / boost rate** and its hours.
-   All usage in that window is costed at that rate, ahead of the night rate.
+   All usage in that window is costed at that rate, ahead of the night and peak rates.
 3. When prices change, add another period starting on the change date. Each hour is
    costed with the period in force on that day; hours before your first period get no cost.
 
@@ -441,8 +441,10 @@ Export credit = exported kWh × export rate.
 #### Usage and cost by tariff band
 
 The integration also splits usage and cost by the band each hour is billed in: **Day**, **Night**,
-**Peak** and **EV / boost**, plus the **Standing charge** on its own. Together they add up exactly to
-the Usage and Usage cost statistics. A flat (24-hour) tariff period counts entirely as Day.
+**Peak** and **EV / boost**, plus the **Standing charge** on its own. Together they add up to the
+Usage and Usage cost statistics for the downloaded history (about two years). Hours before your
+first tariff period have no cost and count as Day. Night or peak hours priced at the day rate count
+as Day too, so a flat (24-hour) plan is all Day and a plan without a peak rate shows no Peak.
 
 To see the split on the Energy dashboard, add one grid connection per band in place of the single
 Usage one:

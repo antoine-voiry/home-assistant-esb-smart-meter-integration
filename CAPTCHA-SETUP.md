@@ -42,7 +42,9 @@ them. Copy them from the Network tab instead:
 7. Click **Submit**
 
 If ESB rejects the pasted session, the integration does not fall back to a scripted login (that would
-bring the CAPTCHA back). It shows the CAPTCHA notification again, so copy a fresh Cookie header.
+bring the CAPTCHA back) for 24 hours, even across restarts. It shows the CAPTCHA notification again,
+so copy a fresh Cookie header. A timeout or an ESB outage does not count as a rejection: the session
+is kept and tried again on the next update.
 
 ### Step 4: Verify It's Working
 
