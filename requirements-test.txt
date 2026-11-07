@@ -4,4 +4,4 @@
 # Bump this when production HA is upgraded.
 pytest-homeassistant-custom-component==0.13.372
 pytest-cov>=6.0.0
-pytest-aiohttp>=1.0.0
+pytest-aiohttp>=1.1.1
