@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime, timedelta
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, Morsel
 from pathlib import Path
 from typing import Any
 
@@ -242,13 +242,8 @@ class SessionManager:
                 timeout=aiohttp.ClientTimeout(total=30),
             )
 
-            # Load the cookies into the session
-            for name, value in cookies.items():
-                # Create a basic cookie - domain and path will be set automatically
-                cookie = SimpleCookie()
-                cookie[name] = value
-                # Add to jar with ESB domain
-                session.cookie_jar.update_cookies(cookie, URL("https://myaccount.esbnetworks.ie"))
+            # Load the cookies the same way the real session does
+            self.load_cookies_to_jar(session.cookie_jar, cookies)
 
             validation_headers = {
                 "User-Agent": user_agent,
@@ -319,14 +314,16 @@ class SessionManager:
         esb_url = URL("https://myaccount.esbnetworks.ie")
 
         for name, value in cookies.items():
-            # Create a proper cookie object with domain and path
-            cookie = SimpleCookie()
-            cookie[name] = value
-            cookie[name]["domain"] = "myaccount.esbnetworks.ie"
-            cookie[name]["path"] = "/"
-
-            # Add to jar
-            cookie_jar.update_cookies(cookie, esb_url)
+            # A Morsel keeps the value as pasted; the jar (quote_cookie=False) sends it unquoted
+            morsel = Morsel()
+            try:
+                morsel.set(name, value, value)
+            except CookieError:
+                _LOGGER.warning("Skipping cookie %s: its name cannot be sent in a Cookie header", name)
+                continue
+            morsel["domain"] = "myaccount.esbnetworks.ie"
+            morsel["path"] = "/"
+            cookie_jar.update_cookies({name: morsel}, esb_url)
 
         _LOGGER.debug("Loaded %d cookies to jar", len(cookies))
 
@@ -378,7 +375,8 @@ class SessionManager:
 
         # The Cookie request header ("name=value; name2=value2"), with or without its
         # "Cookie:" name, possibly wrapped over several lines by the copy.
-        cookie_string = " ".join(cookie_string.split())
+        # Line breaks from the copy can fall inside a value, so drop all whitespace
+        cookie_string = "".join(cookie_string.split())
         if cookie_string.lower().startswith("cookie:"):
             cookie_string = cookie_string[len("cookie:") :]
 

@@ -246,3 +246,21 @@ class TestFullLoginKeepsSession:
         assert kw["download_token"] is None
         assert kw["source"] == SESSION_SOURCE_LOGIN
         assert kw["cookies"] == {".AspNetCore.Cookies": "x"}
+
+
+class TestCookiesSentAsPasted:
+    def test_value_wrapped_mid_token_is_rejoined(self, mock_hass):
+        sm = SessionManager(mock_hass, "12345678901")
+        pasted = "Cookie: .AspNetCore.Cookies=CfDJ8AbC\nDeF; ARRAffinity=x"
+        assert sm._parse_cookie_string(pasted) == {".AspNetCore.Cookies": "CfDJ8AbCDeF", "ARRAffinity": "x"}
+
+    @pytest.mark.asyncio
+    async def test_values_are_not_quoted_and_bad_names_are_skipped(self, mock_hass):
+        import aiohttp
+        from yarl import URL
+
+        sm = SessionManager(mock_hass, "12345678901")
+        jar = aiohttp.CookieJar(quote_cookie=False, unsafe=True)  # as utils.create_esb_session builds it
+        sm.load_cookies_to_jar(jar, {"OptanonConsent": "isGpcEnabled=0&a=b/c,d", "bad[name]": "v"})
+        sent = jar.filter_cookies(URL("https://myaccount.esbnetworks.ie/")).output(header="", sep=";").strip()
+        assert sent == "OptanonConsent=isGpcEnabled=0&a=b/c,d"
