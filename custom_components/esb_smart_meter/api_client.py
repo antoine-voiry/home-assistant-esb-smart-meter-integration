@@ -425,7 +425,7 @@ class ESBDataApi:
         delay = get_human_like_delay()
         await asyncio.sleep(delay)
 
-        # REQUEST 6: GET Api/HistoricConsumption
+        # REQUEST 6: GET energymanagement/historic-consumption
         consumption_headers = {
             **headers,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

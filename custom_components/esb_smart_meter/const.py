@@ -37,9 +37,6 @@ SESSION_CACHE_KEY = "cached_session"
 SESSION_TIMESTAMP_KEY = "session_timestamp"
 SESSION_EXPIRY_HOURS = 336  # Session expiry: 14 days (336 hours) - aggressive reuse
 SESSION_FILE_NAME = "session_cache"  # Base filename for session storage
-SESSION_VALIDATION_ENDPOINTS = [
-    "https://myaccount.esbnetworks.ie/Api/HistoricConsumption",
-]
 
 # CAPTCHA handling
 CAPTCHA_NOTIFICATION_ID = "esb_smart_meter_captcha"
