@@ -49,29 +49,17 @@ class SessionManager:
         """
         self._hass = hass
         self._mprn = mprn
-        
+
         # The session file holds live ESB login cookies, so it lives under .storage/, which
         # config-backup tools (git-based ones especially) exclude. Until this change it was
         # <config>/esb_smart_meter/, which a git-synced /config commits and pushes.
-        path_val = hass.config.path(".storage", DOMAIN)
-        legacy_val = hass.config.path(DOMAIN)
-        legacy_path = None
-        if type(path_val).__name__ in ("Mock", "MagicMock", "AsyncMock") or "MagicMock" in str(path_val):
-            self._storage_path = Path(".tmp/mock_esb_smart_meter")
-        else:
-            self._storage_path = Path(str(path_val))
-            legacy_path = Path(str(legacy_val))
+        self._storage_path = Path(str(hass.config.path(".storage", DOMAIN)))
+        legacy_path = Path(str(hass.config.path(DOMAIN)))
 
-        mprn_str = str(mprn)
-        if "Mock" in mprn_str:
-            mprn_str = "mock"
-
-        self._session_file = self._storage_path / f"{SESSION_FILE_NAME}_{mprn_str}.json"
+        self._session_file = self._storage_path / f"{SESSION_FILE_NAME}_{mprn}.json"
 
         self._legacy_file = (
-            legacy_path / self._session_file.name
-            if legacy_path is not None and legacy_path != self._storage_path
-            else None
+            legacy_path / self._session_file.name if legacy_path != self._storage_path else None
         )
         self._storage_ready = False
 

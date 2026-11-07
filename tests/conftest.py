@@ -17,9 +17,10 @@ def _async_create_task_handler(coro):
 
 
 @pytest.fixture
-def mock_hass():
+def mock_hass(tmp_path):
     """Mock Home Assistant instance."""
     hass = MagicMock()
+    hass.config.path = lambda *parts: str(tmp_path.joinpath("config", *parts))
     hass.data = {}
     hass.async_add_executor_job = AsyncMock()
     # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings

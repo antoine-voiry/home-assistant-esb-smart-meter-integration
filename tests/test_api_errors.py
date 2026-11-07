@@ -15,9 +15,10 @@ class TestAPILoginErrorPaths:
     """Test error paths in login flow."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath("config", *parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
@@ -168,9 +169,10 @@ class TestAPIFetchDataErrorPaths:
     """Test error paths in data fetching."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath("config", *parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
@@ -234,9 +236,10 @@ class TestAPIFetchWithCircuitBreaker:
     """Test fetch() with circuit breaker error handling."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath("config", *parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
@@ -375,9 +378,10 @@ class TestAPICSVParsingErrorPaths:
     """Test error paths in CSV parsing."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath("config", *parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         # Mock async_create_task to properly close coroutines and prevent RuntimeWarnings
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
