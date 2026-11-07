@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 from yarl import URL
 
 from .const import (
+    CAPTCHA_COOLDOWN_HOURS,
     DOMAIN,
     ESB_MYACCOUNT_URL,
     SESSION_EXPIRY_HOURS,
@@ -225,6 +226,18 @@ class SessionManager:
                 _LOGGER.debug("Session cache cleared")
         except Exception as err:
             _LOGGER.error("Error clearing session: %s", err)
+
+    async def mark_rejected(self, session_data: dict[str, Any]) -> None:
+        """Keep a rejected pasted session as a marker, so no scripted login follows straight away."""
+        marked = {**session_data, "download_token": None, "rejected_at": dt_util.utcnow().isoformat()}
+        await self._hass.async_add_executor_job(self._write_session_file, marked)
+
+    def rejection_active(self, session_data: dict[str, Any]) -> bool:
+        """Return True while a pasted session was rejected less than CAPTCHA_COOLDOWN_HOURS ago."""
+        rejected_at = session_data.get("rejected_at")
+        if not rejected_at:
+            return False
+        return dt_util.utcnow() - datetime.fromisoformat(rejected_at) < timedelta(hours=CAPTCHA_COOLDOWN_HOURS)
 
     async def check_session(self, http_session: aiohttp.ClientSession, user_agent: str) -> bool:
         """Ask ESB whether the cookies in http_session's jar are logged in.

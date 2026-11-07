@@ -33,6 +33,11 @@ from .utils import get_human_like_delay, get_random_user_agent
 
 _LOGGER = logging.getLogger(__name__)
 
+_PASTE_REJECTED = (
+    "ESB rejected the pasted session cookies. Copy the Cookie request header "
+    "from your browser's Network tab and provide them again."
+)
+
 
 class InvalidAuthException(Exception):
     """Raised when ESB rejects the account email or password."""
@@ -365,23 +370,26 @@ class ESBDataApi:
         _LOGGER.info("Using cached session, skipping login")
         user_agent = cached.get("user_agent", "")
         source = cached.get("source", SESSION_SOURCE_LOGIN)
+        if cached.get("rejected_at"):
+            if self._session_manager.rejection_active(cached):
+                raise CaptchaRequiredException(_PASTE_REJECTED)
+            await self._session_manager.clear_session()
+            return None
         self._session_manager.load_cookies_to_jar(self._session.cookie_jar, cached.get("cookies", {}))
         # Network errors and ESB outages propagate: they say nothing about the cookies
         if not await self._session_manager.check_session(self._session, user_agent):
             self._session.cookie_jar.clear()
-            await self._session_manager.clear_session()
             if source == SESSION_SOURCE_MANUAL:
-                # Falling through to a fresh login here would just hit the CAPTCHA again,
-                # and every scripted attempt can prolong ESB's restriction.
+                # Keep the rejected paste as a marker: a restart must not log in by script
+                # straight away, and every scripted attempt can prolong ESB's restriction.
+                await self._session_manager.mark_rejected(cached)
                 _LOGGER.error(
                     "ESB rejected the pasted cookies. Copy the whole Cookie request header "
                     "from the browser's Network tab (document.cookie cannot see ESB's "
                     "HttpOnly login cookies) and paste it again."
                 )
-                raise CaptchaRequiredException(
-                    "ESB rejected the pasted session cookies. Copy the Cookie request header "
-                    "from your browser's Network tab and provide them again."
-                )
+                raise CaptchaRequiredException(_PASTE_REJECTED)
+            await self._session_manager.clear_session()
             _LOGGER.warning("Cached session validation failed, performing fresh login")
             return None
 

@@ -158,11 +158,11 @@ class TestCachedManualSession:
         with (
             patch.object(sm, "load_session", AsyncMock(return_value=cached)),
             patch.object(sm, "check_session", AsyncMock(return_value=False)),
-            patch.object(sm, "clear_session", AsyncMock()) as clear,
+            patch.object(sm, "mark_rejected", AsyncMock()) as mark,
         ):
             with pytest.raises(CaptchaRequiredException):
                 await esb_api._ESBDataApi__login()
-        clear.assert_awaited_once()
+        mark.assert_awaited_once()
         esb_api._session.get.assert_not_called()
         esb_api._session.post.assert_not_called()
 
@@ -303,3 +303,58 @@ class TestResumeSession:
         ):
             await esb_api._ESBDataApi__login()
         assert save.await_args.kwargs["cookies"] == {"c": "1", "XSRF-TOKEN": "new"}
+
+
+class TestRejectedPasteMarker:
+    @pytest.mark.asyncio
+    async def test_marker_blocks_login_without_any_request(self, esb_api):
+        from homeassistant.util import dt as dt_util
+
+        cached = {
+            "cookies": {"c": "1"}, "user_agent": BROWSER_UA, "source": SESSION_SOURCE_MANUAL,
+            "rejected_at": dt_util.utcnow().isoformat(),
+        }
+        sm = esb_api._session_manager
+        esb_api._session.get = MagicMock()
+        esb_api._session.post = MagicMock()
+        with patch.object(sm, "load_session", AsyncMock(return_value=cached)):
+            with pytest.raises(CaptchaRequiredException):
+                await esb_api._ESBDataApi__login()
+        esb_api._session.get.assert_not_called()
+        esb_api._session.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_old_marker_allows_login_again(self, esb_api):
+        from datetime import timedelta
+
+        from homeassistant.util import dt as dt_util
+
+        cached = {
+            "cookies": {"c": "1"}, "user_agent": BROWSER_UA, "source": SESSION_SOURCE_MANUAL,
+            "rejected_at": (dt_util.utcnow() - timedelta(hours=25)).isoformat(),
+        }
+        sm = esb_api._session_manager
+        esb_api._session.get = MagicMock(side_effect=RuntimeError("login attempted"))
+        with (
+            patch.object(sm, "load_session", AsyncMock(return_value=cached)),
+            patch.object(sm, "clear_session", AsyncMock()) as clear,
+        ):
+            with pytest.raises(RuntimeError, match="login attempted"):
+                await esb_api._ESBDataApi__login()
+        clear.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_mark_rejected_keeps_cookies_and_drops_token(self, tmp_path):
+        hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
+
+        async def run(func, *args):
+            return func(*args)
+
+        hass.async_add_executor_job = run
+        sm = SessionManager(hass, "12345678901")
+        await sm.save_session(cookies={"c": "1"}, user_agent=BROWSER_UA, download_token="t", source=SESSION_SOURCE_MANUAL)
+        await sm.mark_rejected(await sm.load_session())
+        saved = await sm.load_session()
+        assert saved["cookies"] == {"c": "1"} and saved["download_token"] is None
+        assert sm.rejection_active(saved) is True
