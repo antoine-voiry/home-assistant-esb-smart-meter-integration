@@ -11,12 +11,15 @@ login cookies, so the paste never contained the session in the first place.
 """
 
 import json
+import stat
+from datetime import datetime, timedelta
 from pathlib import Path
-from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from homeassistant.util import dt as dt_util
+from yarl import URL
 
 from custom_components.esb_smart_meter.api_client import ESBDataApi
 from custom_components.esb_smart_meter.const import (
@@ -253,7 +256,6 @@ class TestFullLoginKeepsSession:
     async def test_session_saved_before_token_step(
         self, esb_api, sample_esb_login_html, sample_esb_confirm_html
     ):
-        import aiohttp
 
         def resp(text="", status=200, raises=None):
             inner = MagicMock(status=status, headers={})
@@ -299,8 +301,6 @@ class TestCookiesSentAsPasted:
 
     @pytest.mark.asyncio
     async def test_values_are_not_quoted_and_bad_names_are_skipped(self, mock_hass):
-        import aiohttp
-        from yarl import URL
 
         sm = SessionManager(mock_hass, "12345678901")
         jar = aiohttp.CookieJar(quote_cookie=False, unsafe=True)  # as utils.create_esb_session builds it
@@ -312,7 +312,6 @@ class TestCookiesSentAsPasted:
 class TestResumeSession:
     @pytest.mark.asyncio
     async def test_network_error_keeps_the_session(self, esb_api):
-        import aiohttp
 
         cached = {"cookies": {"c": "1"}, "user_agent": BROWSER_UA, "download_token": None, "source": SESSION_SOURCE_MANUAL}
         sm = esb_api._session_manager
@@ -346,7 +345,6 @@ class TestResumeSession:
 class TestRejectedPasteMarker:
     @pytest.mark.asyncio
     async def test_marker_blocks_login_without_any_request(self, esb_api):
-        from homeassistant.util import dt as dt_util
 
         cached = {
             "cookies": {"c": "1"}, "user_agent": BROWSER_UA, "source": SESSION_SOURCE_MANUAL,
@@ -363,9 +361,7 @@ class TestRejectedPasteMarker:
 
     @pytest.mark.asyncio
     async def test_old_marker_allows_login_again(self, esb_api):
-        from datetime import timedelta
 
-        from homeassistant.util import dt as dt_util
 
         cached = {
             "cookies": {"c": "1"}, "user_agent": BROWSER_UA, "source": SESSION_SOURCE_MANUAL,
@@ -401,7 +397,6 @@ class TestRejectedPasteMarker:
 class TestStaleDownloadToken:
     @staticmethod
     def _refused(status):
-        import aiohttp
 
         return aiohttp.ClientResponseError(MagicMock(), (), status=status)
 
@@ -422,7 +417,6 @@ class TestStaleDownloadToken:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("from_cache, status", [(False, 400), (True, 429), (True, 503)])
     async def test_other_failures_are_not_retried(self, esb_api, from_cache, status):
-        import aiohttp
 
         login = {"download_token": "t", "user_agent": BROWSER_UA, "source": SESSION_SOURCE_LOGIN, "token_from_cache": from_cache}
         with (
@@ -449,10 +443,7 @@ class TestRejectionMarkerLifetime:
 
     @pytest.mark.asyncio
     async def test_marker_outlives_nearly_expired_session(self, tmp_path):
-        import json
-        from datetime import timedelta
 
-        from homeassistant.util import dt as dt_util
 
         sm = self._sm(tmp_path)
         await sm.save_session(cookies={"c": "1"}, user_agent=BROWSER_UA, download_token="t", source=SESSION_SOURCE_MANUAL)
@@ -462,15 +453,12 @@ class TestRejectionMarkerLifetime:
         await sm.mark_rejected(await sm.load_session())
         saved = await sm.load_session()
         assert saved is not None
-        from datetime import datetime
 
         assert datetime.fromisoformat(saved["expires_at"]) >= dt_util.utcnow() + timedelta(hours=23)
 
     @pytest.mark.asyncio
     async def test_marker_without_expiry_lasts_the_cooldown(self, tmp_path):
-        from datetime import datetime, timedelta
 
-        from homeassistant.util import dt as dt_util
 
         sm = self._sm(tmp_path)
         await sm._async_ensure_storage()
@@ -485,7 +473,6 @@ class TestRejectionMarkerLifetime:
 
     @pytest.mark.asyncio
     async def test_session_file_is_owner_only(self, tmp_path):
-        import stat
 
         sm = self._sm(tmp_path)
         Path(sm._session_file).parent.mkdir(parents=True, exist_ok=True)
