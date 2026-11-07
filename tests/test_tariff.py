@@ -179,9 +179,6 @@ def test_validate_period_checks_the_boost_window_only_when_set():
     assert validate_period(_form(boost_start=3, boost_end=3), set()) == {}  # no boost rate: ignored
     assert validate_period(_form(boost_rate=0.09, boost_start=2, boost_end=5), set()) == {}
     assert validate_period(_form(boost_rate=0.09, boost_start=3, boost_end=3), set()) == {"boost_end": "empty_band"}
-    assert validate_period(_form(boost_rate=0.09, boost_start=16, boost_end=18), set()) == {
-        "base": "boost_overlaps_peak"
-    }
 
 
 @pytest.mark.parametrize(
@@ -228,3 +225,19 @@ def test_band_series_skip_hours_before_the_first_period():
     assert [h for h, _ in band_usage(hourly, [_period()], "night")][0] == datetime(2026, 1, 1, 0, tzinfo=UTC)
     assert band_usage([], [_period()], "day") == [] and standing_charges(hourly, []) == []
 
+
+
+def test_band_priced_at_the_day_rate_counts_as_day():
+    no_peak = _period(peak_rate=0.30)  # day/night plan: peak hours listed but not billed
+    assert no_peak.band_at(_local(2026, 10, 21, 17)) == "day"
+    assert no_peak.band_at(_local(2026, 10, 21, 23)) == "night"
+    no_night = _period(night_rate=0.30)
+    assert no_night.band_at(_local(2026, 10, 21, 23)) == "day"
+    assert no_night.band_at(_local(2026, 10, 21, 17)) == "peak"
+
+
+def test_boost_window_may_overlap_peak_and_wins():
+    period = _period(boost_rate=0.09, boost_start=16, boost_end=18)
+    assert validate_period(_form(boost_rate=0.09, boost_start=16, boost_end=18), set()) == {}
+    assert period.band_at(_local(2026, 10, 21, 17)) == "boost"
+    assert period.band_at(_local(2026, 10, 21, 18)) == "peak"

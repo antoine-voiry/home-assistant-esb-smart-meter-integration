@@ -96,14 +96,19 @@ class TariffPeriod:
         return data
 
     def band_at(self, local: datetime) -> str:
-        """Return the band ("day", "night", "peak" or "boost") an Irish local time is billed in."""
+        """Return the band ("day", "night", "peak" or "boost") an Irish local time is billed in.
+
+        Night or peak hours priced at the day rate are not a real band on the bill, so they count as day.
+        """
         if self.boost_rate is not None and _in_band(local.hour, self.boost_start, self.boost_end):
             return "boost"
-        if self.day_rate == self.night_rate == self.peak_rate:
-            return "day"  # a flat (24-hour) tariff has no real night or peak, whatever hours it lists
-        if self._peak_applies_on(local) and _in_band(local.hour, self.peak_start, self.peak_end):
+        if (
+            self.peak_rate != self.day_rate
+            and self._peak_applies_on(local)
+            and _in_band(local.hour, self.peak_start, self.peak_end)
+        ):
             return "peak"
-        if _in_band(local.hour, self.night_start, self.night_end):
+        if self.night_rate != self.day_rate and _in_band(local.hour, self.night_start, self.night_end):
             return "night"
         return "day"
 
@@ -210,9 +215,6 @@ def validate_period(data: Mapping[str, Any], other_dates: set[date]) -> dict[str
         period.night_start, period.night_end
     ):
         errors["base"] = "peak_overlaps_night"
-    if not errors and period.boost_rate is not None:
-        if period.boost_start == period.boost_end:
-            errors[CONF_BOOST_END] = "empty_band"
-        elif _band_hours(period.boost_start, period.boost_end) & _band_hours(period.peak_start, period.peak_end):
-            errors["base"] = "boost_overlaps_peak"
+    if not errors and period.boost_rate is not None and period.boost_start == period.boost_end:
+        errors[CONF_BOOST_END] = "empty_band"
     return errors

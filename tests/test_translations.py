@@ -46,7 +46,7 @@ def test_tariff_subentry_is_translated():
     tariff = strings["config_subentries"]["tariff"]
     assert tariff["initiate_flow"]["user"].strip()
     assert set(tariff["step"]) == {"user", "rates", "reconfigure"}
-    assert set(tariff["error"]) == {"duplicate_period", "empty_band", "peak_overlaps_night", "boost_overlaps_peak"}
+    assert set(tariff["error"]) == {"duplicate_period", "empty_band", "peak_overlaps_night"}
     assert set(strings["selector"]["preset"]["options"]) == {"sse_airtricity_smart", "bord_gais_smart", "custom"}
     for step in ("rates", "reconfigure"):
         assert set(tariff["step"][step]["data"]) == {
@@ -61,3 +61,8 @@ def test_energy_dashboard_issue_is_translated():
     assert issue["title"].strip()
     for placeholder in ("{entities}", "{usage}", "{export}", "{usage_cost}", "{export_credit}"):
         assert placeholder in issue["description"]
+
+
+def test_reconfigure_step_explains_the_fields_like_the_rates_step():
+    tariff = _load("strings.json")["config_subentries"]["tariff"]
+    assert tariff["step"]["reconfigure"]["data_description"] == tariff["step"]["rates"]["data_description"]

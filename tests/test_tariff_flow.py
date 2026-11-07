@@ -107,18 +107,6 @@ async def test_add_period_without_boost_stores_no_boost_keys(recorder_mock, hass
 
 
 @pytest.mark.asyncio
-async def test_add_period_rejects_boost_overlapping_peak(recorder_mock, hass, enable_custom_integrations, entry):
-    result = await _start(hass, entry)
-    result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"preset": "custom"})
-    result = await hass.config_entries.subentries.async_configure(
-        result["flow_id"], {**RATES, "boost_rate": 0.09, "boost_start": 18, "boost_end": 20}
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "boost_overlaps_peak"}
-
-
-@pytest.mark.asyncio
 async def test_add_period_rejects_duplicate_date(recorder_mock, hass, enable_custom_integrations, entry):
     result = await _start(hass, entry)
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"preset": "custom"})
