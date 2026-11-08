@@ -6,15 +6,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.esb_smart_meter.const import CONF_MPRN, DOMAIN, SUBENTRY_TARIFF
 from custom_components.esb_smart_meter.tariff_check import async_check_tariff, async_remove_tariff_issue
+from custom_components.esb_smart_meter.tariff_flow import PRESETS
 
 MPRN = "10301831754"
-TARIFF = {
-    "effective_from": "2026-01-01",
-    "day_rate": 0.30,
-    "night_rate": 0.15,
-    "peak_rate": 0.40,
-    "standing_charge": 0.70,
-}
+TARIFF = {**PRESETS["bord_gais_smart"], "effective_from": "2026-01-01"}
 
 
 def _entry(hass, subentries=()):

@@ -16,6 +16,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import asy
 from custom_components.esb_smart_meter.api_client import InvalidAuthException
 from custom_components.esb_smart_meter.const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
 from custom_components.esb_smart_meter.models import DUBLIN_TZ, ESBData
+from custom_components.esb_smart_meter.tariff_flow import PRESETS
 
 MPRN = "12345678901"
 COST_ID = f"esb_smart_meter:usage_cost_{MPRN}"
@@ -456,7 +457,13 @@ async def test_no_tariff_issue_until_a_tariff_period_is_added(recorder_mock, has
         assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is not None
 
         hass.config_entries.async_add_subentry(
-            entry, ConfigSubentry(data=TARIFF, subentry_type="tariff", title="t", unique_id="2020-01-01")
+            entry,
+            ConfigSubentry(
+                data={**PRESETS["bord_gais_smart"], "effective_from": "2020-01-01"},
+                subentry_type="tariff",
+                title="Bord Gáis",
+                unique_id="2020-01-01",
+            ),
         )
         await hass.async_block_till_done(wait_background_tasks=True)
         assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is None
