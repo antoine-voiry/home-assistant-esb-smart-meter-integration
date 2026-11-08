@@ -468,3 +468,23 @@ async def test_no_tariff_issue_until_a_tariff_period_is_added(recorder_mock, has
         await hass.async_block_till_done(wait_background_tasks=True)
         assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is None
         fetch.assert_awaited_once()  # adding a tariff re-costs from memory, no reload
+
+
+@pytest.mark.asyncio
+async def test_no_tariff_issue_survives_a_failed_first_download(
+    recorder_mock, hass, enable_custom_integrations, entry, session
+):
+    await _setup(hass, entry, AsyncMock(side_effect=InvalidAuthException("bad")))
+
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is not None
+
+
+@pytest.mark.asyncio
+async def test_no_tariff_issue_is_cleared_on_unload(recorder_mock, hass, enable_custom_integrations, entry, session):
+    await _setup(hass, entry, AsyncMock(return_value=_esb_data()))
+    issues = ir.async_get(hass)
+    assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is not None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is None

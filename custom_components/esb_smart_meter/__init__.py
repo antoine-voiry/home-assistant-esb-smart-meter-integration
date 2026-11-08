@@ -53,12 +53,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
         update_interval=update_interval,
     )
 
+    # Warn (Repairs) while there is no tariff period, so the cost statistics stay empty.
+    # Checked before the first download, which can fail (CAPTCHA, outage) and retry for days.
+    async_check_tariff(hass, entry)
+
     # Fetch initial data; HA retries setup on failure, so don't leak a session each time
     try:
         await coordinator.async_config_entry_first_refresh()
     except Exception:
         await session.close()
         raise
+
+    # Registered only now: HA also runs unload callbacks when setup fails, which would hide the notice
+    entry.async_on_unload(lambda: async_remove_tariff_issue(hass, entry.entry_id))
 
     entry.runtime_data = ESBRuntimeData(coordinator=coordinator, session=session, settings=_settings_snapshot(entry))
 
@@ -70,9 +77,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
 
     # Warn (Repairs) if the Energy dashboard uses ESB entities instead of the ESB statistics
     await async_setup_energy_check(hass)
-
-    # Warn (Repairs) while there is no tariff period, so the cost statistics stay empty
-    async_check_tariff(hass, entry)
 
     return True
 
