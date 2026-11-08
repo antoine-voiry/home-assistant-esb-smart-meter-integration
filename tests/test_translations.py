@@ -52,6 +52,7 @@ def test_tariff_subentry_is_translated():
         assert set(tariff["step"][step]["data"]) == {
             "effective_from", "day_rate", "night_rate", "peak_rate", "standing_charge", "export_rate",
             "night_start", "night_end", "peak_start", "peak_end", "peak_weekdays_only",
+            "boost_rate", "boost_start", "boost_end",
         }
 
 
@@ -60,3 +61,8 @@ def test_energy_dashboard_issue_is_translated():
     assert issue["title"].strip()
     for placeholder in ("{entities}", "{usage}", "{export}", "{usage_cost}", "{export_credit}"):
         assert placeholder in issue["description"]
+
+
+def test_reconfigure_step_explains_the_fields_like_the_rates_step():
+    tariff = _load("strings.json")["config_subentries"]["tariff"]
+    assert tariff["step"]["reconfigure"]["data_description"] == tariff["step"]["rates"]["data_description"]

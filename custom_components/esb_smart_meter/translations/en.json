@@ -57,10 +57,12 @@
         "title": "Manual Cookie Input",
         "description": "If ESB Networks is showing CAPTCHA, you can provide session cookies manually:\n\n{cookie_instructions}",
         "data": {
-          "manual_cookies": "Cookie String"
+          "manual_cookies": "Cookie request header",
+          "manual_user_agent": "Browser User-Agent"
         },
         "data_description": {
-          "manual_cookies": "Paste the entire cookie string from your browser"
+          "manual_cookies": "The whole Cookie request header from the browser's Network tab (not document.cookie)",
+          "manual_user_agent": "The User-Agent request header from the same request. Optional, but the session is replayed with it"
         }
       }
     },
@@ -140,6 +142,36 @@
       },
       "circuit_breaker_status": {
         "name": "Circuit breaker status"
+      },
+      "usage_day_total": {
+        "name": "Day usage total"
+      },
+      "usage_night_total": {
+        "name": "Night usage total"
+      },
+      "usage_peak_total": {
+        "name": "Peak usage total"
+      },
+      "usage_boost_total": {
+        "name": "EV / boost usage total"
+      },
+      "usage_cost_day_total": {
+        "name": "Day cost total"
+      },
+      "usage_cost_night_total": {
+        "name": "Night cost total"
+      },
+      "usage_cost_peak_total": {
+        "name": "Peak cost total"
+      },
+      "usage_cost_boost_total": {
+        "name": "EV / boost cost total"
+      },
+      "standing_charge_total": {
+        "name": "Standing charge total"
+      },
+      "standing_charge_energy_total": {
+        "name": "Standing charge energy (always 0)"
       }
     }
   },
@@ -172,12 +204,17 @@
             "night_end": "Night ends (hour)",
             "peak_start": "Peak starts (hour)",
             "peak_end": "Peak ends (hour)",
-            "peak_weekdays_only": "Peak on weekdays only"
+            "peak_weekdays_only": "Peak on weekdays only",
+            "boost_rate": "EV / boost rate",
+            "boost_start": "EV / boost starts (hour)",
+            "boost_end": "EV / boost ends (hour)"
           },
           "data_description": {
             "export_rate": "Leave at 0 if you don't export or aren't paid for export",
             "night_end": "First hour that is no longer night, e.g. 8 for 23:00–08:00",
-            "peak_end": "First hour that is no longer peak, e.g. 19 for 17:00–19:00"
+            "peak_end": "First hour that is no longer peak, e.g. 19 for 17:00–19:00",
+            "boost_rate": "Optional. A cheaper window every day, e.g. an EV night rate 02:00–05:00. It takes precedence over the night and peak rates. Leave empty if your plan has none; clear it to remove the window",
+            "boost_end": "First hour that is no longer in the window, e.g. 5 for 02:00–05:00"
           }
         },
         "reconfigure": {
@@ -193,7 +230,17 @@
             "night_end": "Night ends (hour)",
             "peak_start": "Peak starts (hour)",
             "peak_end": "Peak ends (hour)",
-            "peak_weekdays_only": "Peak on weekdays only"
+            "peak_weekdays_only": "Peak on weekdays only",
+            "boost_rate": "EV / boost rate",
+            "boost_start": "EV / boost starts (hour)",
+            "boost_end": "EV / boost ends (hour)"
+          },
+          "data_description": {
+            "export_rate": "Leave at 0 if you don't export or aren't paid for export",
+            "night_end": "First hour that is no longer night, e.g. 8 for 23:00–08:00",
+            "peak_end": "First hour that is no longer peak, e.g. 19 for 17:00–19:00",
+            "boost_rate": "Optional. A cheaper window every day, e.g. an EV night rate 02:00–05:00. It takes precedence over the night and peak rates. Leave empty if your plan has none; clear it to remove the window",
+            "boost_end": "First hour that is no longer in the window, e.g. 5 for 02:00–05:00"
           }
         }
       },

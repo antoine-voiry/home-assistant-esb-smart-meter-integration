@@ -33,9 +33,10 @@ def _response(text: str) -> MagicMock:
 
 
 @pytest.fixture
-def esb_api():
+def esb_api(tmp_path):
     """ESBDataApi with mocked transport and no cached session."""
     hass = MagicMock()
+    hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
     hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
     hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
     session = MagicMock()

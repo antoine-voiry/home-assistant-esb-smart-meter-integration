@@ -15,14 +15,18 @@ class TestESBDataApi:
 
     @pytest.fixture
     def esb_api(self, mock_hass, mock_aiohttp_session):
-        """Create ESBDataApi instance."""
-        return ESBDataApi(
+        """Create ESBDataApi instance with an explicitly empty session cache."""
+        api = ESBDataApi(
             hass=mock_hass,
             session=mock_aiohttp_session,
             username="test@example.com",
             password="test-password",
             mprn="12345678901",
         )
+        # mock_hass.async_add_executor_job is an AsyncMock that does not run the
+        # file read, so state "no saved session" explicitly.
+        api._session_manager.load_session = AsyncMock(return_value=None)
+        return api
 
     @pytest.mark.asyncio
     async def test_login_success(self, esb_api, sample_esb_login_html, sample_esb_confirm_html):
@@ -230,7 +234,7 @@ class TestESBDataApi:
         with patch.object(
             esb_api,
             "_ESBDataApi__login",
-            return_value={"download_token": "test-token", "user_agent": "test-ua"},
+            return_value={"download_token": "test-token", "user_agent": "test-ua", "source": "login", "cookies": {}},
         ):
             with patch.object(esb_api, "_ESBDataApi__fetch_data", return_value=sample_csv_data):
                 with patch.object(
@@ -270,7 +274,7 @@ class TestESBDataApiCachedSession:
         }
 
         with patch.object(esb_api._session_manager, "load_session", return_value=cached_session), patch.object(
-            esb_api._session_manager, "validate_session_cookies", return_value=True
+            esb_api._session_manager, "check_session", return_value=True
         ):
             result = await esb_api._ESBDataApi__login()
 
@@ -475,7 +479,7 @@ class TestESBDataApiErrorConditions:
 
         with (
             patch.object(esb_api._session_manager, "load_session", return_value=cached_session),
-            patch.object(esb_api._session_manager, "validate_session_cookies", return_value=False),
+            patch.object(esb_api._session_manager, "check_session", return_value=False),
             patch.object(esb_api._session_manager, "clear_session", new_callable=AsyncMock) as mock_clear,
         ):
             # Mock the full login flow after validation fails

@@ -17,8 +17,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from custom_components.esb_smart_meter.const import DOMAIN
 from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.models import ESBData
-from custom_components.esb_smart_meter.tariff import TariffPeriod, fingerprint, usage_costs
+from custom_components.esb_smart_meter import sensor as sensor_module
+from custom_components.esb_smart_meter.tariff import BANDS, TariffPeriod, fingerprint, usage_costs
 from custom_components.esb_smart_meter.sensor import (
+    BandCostSensor,
+    BandUsageSensor,
+    BaseBandSensor,
+    StandingChargeEnergySensor,
+    StandingChargeSensor,
     ApiStatusSensor,
     CircuitBreakerStatusSensor,
     DataAgeSensor,
@@ -119,15 +125,15 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
-        """Test that setup_entry creates all 20 sensors (period, export, kWh and euro totals, diagnostic)."""
+        """Test that setup_entry creates all 30 sensors (period, export, totals, diagnostic, band breakdown)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # Verify 20 sensors were created (12 period + 2 kWh totals + 2 euro totals + 4 diagnostic)
+        # 12 period + 2 kWh totals + 2 euro totals + 4 diagnostic + 4 band kWh + 4 band euro + 2 standing charge
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 20
+        assert len(sensors) == 30
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -166,6 +172,9 @@ class TestAsyncSetupEntry:
             "export_this_month", "export_last_30_days",
             "usage_total", "export_total", "usage_cost_total", "export_credit_total",
             "last_update", "api_status", "data_age", "circuit_breaker_status",
+            "usage_day_total", "usage_night_total", "usage_peak_total", "usage_boost_total",
+            "usage_cost_day_total", "usage_cost_night_total", "usage_cost_peak_total", "usage_cost_boost_total",
+            "standing_charge_total", "standing_charge_energy_total",
         ]
 
     @pytest.mark.asyncio
@@ -1172,3 +1181,91 @@ class TestCostSensors:
         hours = recorder_stub.importer.call_args.args[2]
         assert [round(v, 6) for _, v in hours] == [0.1]  # 0.5 kWh x EUR 0.20
         state.async_set_fingerprint.assert_not_awaited()
+
+
+class TestBandBreakdownSensors:
+    """Per-band usage/cost series for the Energy dashboard."""
+
+    @pytest.mark.asyncio
+    async def test_band_sensors_are_hidden_with_their_own_statistics(self, mock_hass, mock_config_entry):
+        async_add_entities = MagicMock()
+        await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+        every = async_add_entities.call_args[0][0]
+        band = [s for s in every if isinstance(s, BaseBandSensor)]
+
+        assert len(band) == 9  # plus the zero-energy standing charge sensor, which is not a cost series
+        band += [s for s in every if s.translation_key == "standing_charge_energy_total"]
+        assert all(s.entity_registry_visible_default is False for s in band)
+        by_key = {s.translation_key: s for s in band}
+        assert by_key["usage_boost_total"]._statistic_id.startswith("esb_smart_meter:usage_boost_")
+        assert by_key["usage_boost_total"]._statistics_unit == "kWh"
+        assert by_key["usage_cost_peak_total"]._statistic_id.startswith("esb_smart_meter:usage_cost_peak_")
+        assert by_key["usage_cost_peak_total"]._statistics_unit == "EUR"
+        assert by_key["standing_charge_total"]._statistics_unit == "EUR"
+        assert by_key["standing_charge_energy_total"]._statistics_unit == "kWh"
+        assert by_key["usage_day_total"].entity_id == "sensor.esb_electricity_usage_day_total"
+
+
+class TestBandSplitCache:
+    """The 9 band sensors of one coordinator share one split per update."""
+
+    @staticmethod
+    def _sensors_and_data():
+        helper = TestCostSensors
+        coordinator = helper._coordinator()
+        coordinator.band_split = None
+        entry = helper._entry(helper.PERIOD)
+        kwargs = dict(coordinator=coordinator, mprn="12345678901", entry=entry)
+        sensors = [
+            *(BandUsageSensor(band=b, **kwargs) for b in BANDS),
+            *(BandCostSensor(band=b, **kwargs) for b in BANDS),
+            StandingChargeSensor(**kwargs),
+        ]
+        return sensors, coordinator.data
+
+    def test_band_sensors_share_one_split_per_update(self):
+        band_sensors, esb_data = self._sensors_and_data()
+        with patch(
+            "custom_components.esb_smart_meter.sensor.split_by_band", wraps=sensor_module.split_by_band
+        ) as split:
+            for entity in band_sensors:
+                entity._hourly(esb_data=esb_data)
+        assert split.call_count == 1
+
+    def test_split_is_recomputed_for_new_data(self):
+        band_sensors, esb_data = self._sensors_and_data()
+        with patch(
+            "custom_components.esb_smart_meter.sensor.split_by_band", wraps=sensor_module.split_by_band
+        ) as split:
+            band_sensors[0]._hourly(esb_data=esb_data)
+            band_sensors[1]._hourly(esb_data=ESBData(data=[]))
+        assert split.call_count == 2
+
+    def test_split_is_recomputed_when_the_tariff_changes(self):
+        band_sensors, esb_data = self._sensors_and_data()
+        sensor = band_sensors[len(BANDS)]  # BandCostSensor for "day"
+        with patch(
+            "custom_components.esb_smart_meter.sensor.split_by_band", wraps=sensor_module.split_by_band
+        ) as split:
+            first = sensor._hourly(esb_data=esb_data)
+            sensor._entry.subentries["0"].data = TestCostSensors.PERIOD.as_data() | {"day_rate": 0.5, "night_rate": 0.5}
+            second = sensor._hourly(esb_data=esb_data)
+        assert split.call_count == 2
+        assert first != second
+
+    @pytest.mark.asyncio
+    async def test_standing_charge_energy_is_not_recosted_on_tariff_change(self):
+        helper = TestCostSensors
+        kwargs = dict(coordinator=helper._coordinator(), mprn="12345678901", entry=helper._entry(helper.PERIOD))
+        energy = StandingChargeEnergySensor(**kwargs)
+        charge = StandingChargeSensor(**kwargs)
+        hourly = energy._hourly(esb_data=kwargs["coordinator"].data)
+        assert hourly
+        stored = {hour for hour, _ in hourly}
+        for sensor in (energy, charge):
+            sensor.hass = MagicMock()
+        with patch(
+            "custom_components.esb_smart_meter.sensor.ImportState", return_value=helper._state("stale", None)
+        ):
+            assert await energy._needs_full_import(hourly, stored) is False
+            assert await charge._needs_full_import(hourly, stored) is True

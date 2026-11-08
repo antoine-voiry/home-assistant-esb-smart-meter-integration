@@ -23,7 +23,15 @@ from .statistics import (
     async_wait_committed,
     recent_hours,
 )
-from .tariff import export_credits, fingerprint, tariff_periods, usage_costs
+from .tariff import (
+    BANDS,
+    BandSplit,
+    export_credits,
+    fingerprint,
+    split_by_band,
+    tariff_periods,
+    usage_costs,
+)
 
 
 # Entity ids from before entity names were translated; new installs keep them so the
@@ -38,6 +46,11 @@ _LEGACY_OBJECT_IDS = {
     "usage_cost_total": "esb_electricity_usage_cost_total",
     "export_credit_total": "esb_electricity_export_credit_total",
     **{key: f"esb_smart_meter_{key}" for key in ("last_update", "api_status", "data_age", "circuit_breaker_status")},
+    # Per-band breakdown (no legacy ids; these follow the same naming)
+    **{f"usage_{band}_total": f"esb_electricity_usage_{band}_total" for band in BANDS},
+    **{f"usage_cost_{band}_total": f"esb_electricity_usage_cost_{band}_total" for band in BANDS},
+    "standing_charge_total": "esb_electricity_standing_charge_total",
+    "standing_charge_energy_total": "esb_electricity_standing_charge_energy_total",
 }
 
 
@@ -89,6 +102,11 @@ async def async_setup_entry(
         ApiStatusSensor(coordinator=coordinator, mprn=mprn),
         DataAgeSensor(coordinator=coordinator, mprn=mprn),
         CircuitBreakerStatusSensor(coordinator=coordinator, mprn=mprn),
+        # Breakdown by tariff band, for the Energy dashboard (hidden entities; the statistics are what matter)
+        *(BandUsageSensor(coordinator=coordinator, mprn=mprn, entry=entry, band=band) for band in BANDS),
+        *(BandCostSensor(coordinator=coordinator, mprn=mprn, entry=entry, band=band) for band in BANDS),
+        StandingChargeSensor(coordinator=coordinator, mprn=mprn, entry=entry),
+        StandingChargeEnergySensor(coordinator=coordinator, mprn=mprn, entry=entry),
     ]
 
     # Add entities - coordinator handles updates
@@ -628,6 +646,106 @@ class ExportCreditSensor(BaseCostSensor):
 
     def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
         return export_credits(self._downloaded(esb_data=esb_data), tariff_periods(self._entry))
+
+
+_BAND_LABELS = {"day": "Day", "night": "Night", "peak": "Peak", "boost": "EV / boost"}
+
+
+class BaseBandSensor(BaseCostSensor):
+    """One slice of the usage or its cost, split by tariff band.
+
+    Each band (plus the standing charge) can be added to the Energy dashboard as its
+    own grid source, so usage and cost show per band; together they add up to the
+    Usage and Usage cost statistics. Hidden by default: only the statistics matter.
+    """
+
+    _attr_entity_registry_visible_default = False
+
+    def _downloaded(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return esb_data.hourly_usage()
+
+    def _split(self, esb_data: ESBData) -> BandSplit:
+        """Compute the split once per update and tariff set, for all band sensors."""
+        periods = tariff_periods(self._entry)
+        key = fingerprint(periods)
+        cached = self.coordinator.band_split
+        if cached is None or cached[0] is not esb_data or cached[1] != key:
+            cached = (esb_data, key, split_by_band(self._downloaded(esb_data=esb_data), periods))
+            self.coordinator.band_split = cached
+        return cached[2]
+
+
+class _PerBandSensor(BaseBandSensor):
+    """A band sensor for one of BANDS."""
+
+    _series_prefix: str
+    _label_prefix: str
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry, band: str) -> None:
+        """Initialize the sensor."""
+        self._band = band
+        self._series = f"{self._series_prefix}_{band}"
+        self._label = f"{self._label_prefix} {_BAND_LABELS[band]}"
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key=f"{self._series}_total", entry=entry)
+
+
+class BandUsageSensor(_PerBandSensor):
+    """kWh imported in one tariff band."""
+
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_icon = "mdi:flash"
+    _statistics_unit = UnitOfEnergy.KILO_WATT_HOUR
+    _series_prefix = "usage"
+    _label_prefix = "Usage"
+
+    def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return self._split(esb_data).usage[self._band]
+
+
+class BandCostSensor(_PerBandSensor):
+    """Energy cost of one tariff band, without the standing charge."""
+
+    _series_prefix = "usage_cost"
+    _label_prefix = "Usage cost"
+
+    def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return self._split(esb_data).cost[self._band]
+
+
+class StandingChargeSensor(BaseBandSensor):
+    """The standing charge, which belongs to no band."""
+
+    _series = "standing_charge"
+    _label = "Standing charge"
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="standing_charge_total", entry=entry)
+
+    def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return self._split(esb_data).standing
+
+
+class StandingChargeEnergySensor(BaseHistorySensor):
+    """Always 0 kWh: the energy half of a standing-charge grid source.
+
+    The Energy dashboard only lists a grid source that has an energy statistic, so the
+    standing charge gets this zero series to sit beside its cost. Zeros never change,
+    so unlike the cost series it is not re-imported when the tariffs change.
+    """
+
+    _attr_entity_registry_visible_default = False
+    _attr_icon = "mdi:flash-off"
+    _series = "standing_charge_energy"
+    _label = "Standing charge (0 kWh)"
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry) -> None:
+        """Initialize the sensor (entry kept for a uniform constructor in async_setup_entry)."""
+        super().__init__(coordinator=coordinator, mprn=mprn, translation_key="standing_charge_energy_total")
+
+    def _hourly(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:
+        return [(hour, 0.0) for hour, _ in esb_data.hourly_usage()]
 
 
 class LastUpdateSensor(SensorEntity):

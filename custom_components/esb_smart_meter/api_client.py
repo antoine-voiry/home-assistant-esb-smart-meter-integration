@@ -24,12 +24,19 @@ from .const import (
     ESB_TOKEN_URL,
     MAX_CSV_SIZE_MB,
     RATE_LIMIT_BACKOFF_MINUTES,
+    SESSION_SOURCE_LOGIN,
+    SESSION_SOURCE_MANUAL,
 )
 from .models import ESBData
 from .session_manager import CaptchaRequiredException, SessionManager
 from .utils import get_human_like_delay, get_random_user_agent
 
 _LOGGER = logging.getLogger(__name__)
+
+_PASTE_REJECTED = (
+    "ESB rejected the pasted session cookies. Copy the Cookie request header "
+    "from your browser's Network tab and provide them again."
+)
 
 
 class InvalidAuthException(Exception):
@@ -59,29 +66,14 @@ class ESBDataApi:
         self._session_manager = SessionManager(hass, mprn)
         self._current_user_agent = None
 
-    async def __login(self) -> dict[str, str]:
+    async def __login(self) -> dict[str, Any]:
         """Login to ESB and return cookies (following the complete 8-step flow)."""
         # Check for cached session first
         cached_session = await self._session_manager.load_session()
         if cached_session:
-            _LOGGER.info("Using cached session, skipping login")
-
-            # Validate the session is still working before using it
-            cookies = cached_session.get("cookies", {})
-            user_agent = cached_session.get("user_agent", "")
-
-            if await self._session_manager.validate_session_cookies(cookies, user_agent):
-                _LOGGER.info("Cached session validated successfully")
-                # Load cookies into current session
-                self._session_manager.load_cookies_to_jar(self._session.cookie_jar, cookies)
-                self._current_user_agent = user_agent
-                return {
-                    "download_token": cached_session.get("download_token"),
-                    "user_agent": self._current_user_agent,
-                }
-            else:
-                _LOGGER.warning("Cached session validation failed, performing fresh login")
-                await self._session_manager.clear_session()
+            resumed = await self.__resume_session(cached_session)
+            if resumed is not None:
+                return resumed
 
         # No cached session, perform full login
         _LOGGER.info("No valid cached session, performing full login")
@@ -126,7 +118,7 @@ class ESBDataApi:
                 _LOGGER.debug("Request 1 final URL: %s", response.url)
                 _LOGGER.debug(
                     "Request 1 cookies set: %s",
-                    [f"{c.key}={c.value[:20]}..." for c in self._session.cookie_jar],
+                    [c.key for c in self._session.cookie_jar],
                 )
                 content = await response.text()
                 _LOGGER.debug("Request 1 response length: %d bytes", len(content))
@@ -228,7 +220,7 @@ class ESBDataApi:
             }
             _LOGGER.debug("Request 3: Confirming login")
             _LOGGER.debug("Request 3 URL: %s", confirm_url)
-            _LOGGER.debug("Request 3 params: %s", confirm_params)
+            _LOGGER.debug("Request 3 param keys: %s", list(confirm_params))
             async with self._session.get(
                 confirm_url,
                 params=confirm_params,
@@ -327,14 +319,133 @@ class ESBDataApi:
                 response.raise_for_status()
                 _LOGGER.debug("Signin-oidc successful")
 
+            # Keep the authenticated session NOW. If a later step fails, the next attempt reuses
+            # it (fetching its own token) instead of logging in again, which is what trips the
+            # CAPTCHA: two logins in quick succession.
+            await self._session_manager.save_session(
+                cookies=self._session_manager.extract_cookies_from_jar(self._session.cookie_jar),
+                user_agent=user_agent,
+                download_token=None,
+                source=SESSION_SOURCE_LOGIN,
+            )
+
+            # REQUESTS 5-7: account page, consumption page, download token
+            download_token = await self.__fetch_download_token(
+                headers, referer="https://login.esbnetworks.ie/"
+            )
+
+            _LOGGER.info("Authentication completed successfully for user: %s", self._username)
+
+            # Save session for reuse
+            cookies = self._session_manager.extract_cookies_from_jar(self._session.cookie_jar)
+            await self._session_manager.save_session(
+                cookies=cookies,
+                user_agent=user_agent,
+                download_token=download_token,
+            )
+            _LOGGER.info("Session saved for future reuse")
+
+            return {
+                "download_token": download_token,
+                "user_agent": user_agent,
+                "source": SESSION_SOURCE_LOGIN,
+                "token_from_cache": False,
+                "cookies": cookies,
+            }
+
+        except CaptchaRequiredException:
+            # Re-raise CAPTCHA exceptions without modification
+            raise
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Network error during login: %s", err)
+            raise
+        except json.JSONDecodeError as err:
+            _LOGGER.error("Invalid JSON in ESB response: %s", err)
+            raise ValueError("Invalid authentication response from ESB") from err
+        except (KeyError, ValueError, AttributeError) as err:
+            _LOGGER.error("Error parsing ESB response: %s", err)
+            raise
+
+    async def __resume_session(self, cached: dict[str, Any]) -> dict[str, Any] | None:
+        """Reuse a saved session. None means it was rejected and a full login may follow."""
+        user_agent = cached.get("user_agent", "")
+        source = cached.get("source", SESSION_SOURCE_LOGIN)
+        if cached.get("rejected_at"):
+            if self._session_manager.rejection_active(cached):
+                raise CaptchaRequiredException(_PASTE_REJECTED)
+            await self._session_manager.clear_session()
+            return None
+        _LOGGER.info("Using cached session, skipping login")
+        self._session_manager.load_cookies_to_jar(self._session.cookie_jar, cached.get("cookies", {}))
+        # Network errors and ESB outages propagate: they say nothing about the cookies
+        if not await self._session_manager.check_session(self._session, user_agent):
+            self._session.cookie_jar.clear()
+            if source == SESSION_SOURCE_MANUAL:
+                # Keep the rejected paste as a marker: a restart must not log in by script
+                # straight away, and every scripted attempt can prolong ESB's restriction.
+                await self._session_manager.mark_rejected(cached)
+                _LOGGER.error(
+                    "ESB rejected the pasted cookies. Copy the whole Cookie request header "
+                    "from the browser's Network tab (document.cookie cannot see ESB's "
+                    "HttpOnly login cookies) and paste it again."
+                )
+                raise CaptchaRequiredException(_PASTE_REJECTED)
+            await self._session_manager.clear_session()
+            _LOGGER.warning("Cached session validation failed, performing fresh login")
+            return None
+
+        _LOGGER.info("Cached session validated successfully")
+        self._current_user_agent = user_agent
+        download_token = cached.get("download_token")
+        token_from_cache = bool(download_token)
+        saved_cookies = cached.get("cookies", {})
+        if not download_token:
+            # A pasted session has cookies but no token: get one with those cookies,
+            # exactly as the full login does after signin (requests 6-7; check_session was request 5).
+            _LOGGER.info("Cached session has no download token, requesting one")
+            download_token = await self.__renew_download_token(user_agent, source, account_page_loaded=True)
+            # __renew_download_token just saved the jar as it is now
+            saved_cookies = self._session_manager.extract_cookies_from_jar(self._session.cookie_jar)
+        return {
+            "download_token": download_token,
+            "user_agent": user_agent,
+            "source": source,
+            "token_from_cache": token_from_cache,
+            "cookies": saved_cookies,
+        }
+
+    async def __renew_download_token(self, user_agent: str, source: str, *, account_page_loaded: bool) -> str:
+        """Get a new download token and save it with the cookies ESB set or renewed meanwhile."""
+        download_token = await self.__fetch_download_token(
+            {"User-Agent": user_agent},
+            referer=f"{ESB_MYACCOUNT_URL}/",
+            skip_account_page=account_page_loaded,
+        )
+        await self._session_manager.save_session(
+            cookies=self._session_manager.extract_cookies_from_jar(self._session.cookie_jar),
+            user_agent=user_agent,
+            download_token=download_token,
+            source=source,
+        )
+        return download_token
+
+    async def __fetch_download_token(
+        self, headers: dict[str, str], referer: str, *, skip_account_page: bool = False
+    ) -> str:
+        """Load the account and consumption pages, then get a file download token.
+
+        Needs an authenticated cookie jar: after signin-oidc, or a validated cached session
+        (whose check already loaded the account page, so skip_account_page=True).
+        """
+        if not skip_account_page:
             # REQUEST 5: GET myaccount.esbnetworks.ie
             myaccount_headers = {
                 **headers,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Referer": "https://login.esbnetworks.ie/",
+                "Referer": referer,
                 "Sec-Fetch-Dest": "document",
                 "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "same-site",
+                "Sec-Fetch-Site": "same-origin" if referer.startswith(ESB_MYACCOUNT_URL) else "same-site",
             }
             _LOGGER.debug("Request 5: Accessing my account page")
             async with self._session.get(
@@ -349,77 +460,52 @@ class ESBDataApi:
             delay = get_human_like_delay()
             await asyncio.sleep(delay)
 
-            # REQUEST 6: GET Api/HistoricConsumption
-            consumption_headers = {
-                **headers,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Referer": f"{ESB_MYACCOUNT_URL}/",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "same-origin",
-                "Sec-Fetch-User": "?1",
-            }
-            _LOGGER.debug("Request 6: Loading historic consumption page")
-            async with self._session.get(
-                ESB_CONSUMPTION_URL,
-                headers=consumption_headers,
-                timeout=self._timeout,
-            ) as response:
-                response.raise_for_status()
-                _LOGGER.debug("Historic consumption page loaded")
+        # REQUEST 6: GET energymanagement/historic-consumption
+        consumption_headers = {
+            **headers,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": f"{ESB_MYACCOUNT_URL}/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+        }
+        _LOGGER.debug("Request 6: Loading historic consumption page")
+        async with self._session.get(
+            ESB_CONSUMPTION_URL,
+            headers=consumption_headers,
+            timeout=self._timeout,
+        ) as response:
+            response.raise_for_status()
+            _LOGGER.debug("Historic consumption page loaded")
 
-            # Add human-like delay
-            delay = get_human_like_delay()
-            await asyncio.sleep(delay)
+        # Add human-like delay
+        delay = get_human_like_delay()
+        await asyncio.sleep(delay)
 
-            # REQUEST 7: GET file download token
-            token_headers = {
-                **headers,
-                "Accept": "*/*",
-                "X-Returnurl": ESB_CONSUMPTION_URL,
-                "Referer": ESB_CONSUMPTION_URL,
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-            }
-            _LOGGER.debug("Request 7: Getting file download token")
-            async with self._session.get(
-                ESB_TOKEN_URL,
-                headers=token_headers,
-                timeout=self._timeout,
-            ) as response:
-                response.raise_for_status()
-                token_data = await response.json()
-                download_token = token_data.get("token")
-                if not download_token:
-                    raise ValueError("Failed to get download token")
-                _LOGGER.debug("Got download token")
-
-            _LOGGER.info("Authentication completed successfully for user: %s", self._username)
-
-            # Save session for reuse
-            cookies = self._session_manager.extract_cookies_from_jar(self._session.cookie_jar)
-            await self._session_manager.save_session(
-                cookies=cookies,
-                user_agent=user_agent,
-                download_token=download_token,
-            )
-            _LOGGER.info("Session saved for future reuse")
-
-            return {"download_token": download_token, "user_agent": user_agent}
-
-        except CaptchaRequiredException:
-            # Re-raise CAPTCHA exceptions without modification
-            raise
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Network error during login: %s", err)
-            raise
-        except json.JSONDecodeError as err:
-            _LOGGER.error("Invalid JSON in ESB response: %s", err)
-            raise ValueError("Invalid authentication response from ESB") from err
-        except (KeyError, ValueError, AttributeError) as err:
-            _LOGGER.error("Error parsing ESB response: %s", err)
-            raise
+        # REQUEST 7: GET file download token
+        token_headers = {
+            **headers,
+            "Accept": "*/*",
+            "X-Returnurl": ESB_CONSUMPTION_URL,
+            "Referer": ESB_CONSUMPTION_URL,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+        }
+        _LOGGER.debug("Request 7: Getting file download token")
+        async with self._session.get(
+            ESB_TOKEN_URL,
+            headers=token_headers,
+            timeout=self._timeout,
+        ) as response:
+            response.raise_for_status()
+            token_data = await response.json()
+            download_token = token_data.get("token")
+            if not download_token:
+                raise ValueError("Failed to get download token")
+            _LOGGER.debug("Got download token")
+        return download_token
 
     async def __fetch_data(self, download_token: str, user_agent: str) -> str:
         """Fetch the power usage data from ESB with size limits (REQUEST 8)."""
@@ -545,8 +631,29 @@ class ESBDataApi:
                 raise ValueError("Authentication succeeded but no download token received")
 
             _LOGGER.debug("Proceeding with data download after successful authentication")
-            csv_data = await self.__fetch_data(download_token, user_agent)
+            try:
+                csv_data = await self.__fetch_data(download_token, user_agent)
+            except aiohttp.ClientResponseError as err:
+                # A saved token can outlive what ESB accepts (e.g. one from before ESB moved
+                # its pages): get a fresh one once rather than failing every poll until expiry.
+                if not auth_result.get("token_from_cache") or err.status == 429 or not 400 <= err.status < 500:
+                    raise
+                _LOGGER.info("ESB refused the saved download token (HTTP %d), requesting a new one", err.status)
+                download_token = await self.__renew_download_token(
+                    user_agent, auth_result["source"], account_page_loaded=False
+                )
+                csv_data = await self.__fetch_data(download_token, user_agent)
             data = await self._hass.async_add_executor_job(self.__csv_to_dict, csv_data)
+
+            # ESB accepted the session: keep the cookies it renewed (sliding expiration)
+            jar_cookies = self._session_manager.extract_cookies_from_jar(self._session.cookie_jar)
+            if jar_cookies != auth_result.get("cookies"):
+                await self._session_manager.save_session(
+                    cookies=jar_cookies,
+                    user_agent=user_agent,
+                    download_token=download_token,
+                    source=auth_result["source"],
+                )
 
             # Success! Record in circuit breaker
             self._circuit_breaker.record_success()

@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -17,6 +17,9 @@ from .api_client import ESBDataApi, InvalidAuthException
 from .const import CAPTCHA_NOTIFICATION_ID, DEFAULT_SCAN_INTERVAL, DOMAIN, ESB_MYACCOUNT_URL
 from .models import ESBData
 from .session_manager import CaptchaRequiredException
+
+if TYPE_CHECKING:
+    from .tariff import BandSplit
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +77,12 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         self.esb_api = esb_api
         self.mprn = mprn
         self._captcha_notification_sent = False
+        # Set by a manual paste: notify again if ESB still shows a CAPTCHA
+        self._renotify_captcha = False
+        self._normal_interval = update_interval
         self.last_successful_update_time: datetime | None = None
+        # (downloaded data, tariff fingerprint, split) shared by the band sensors of one update
+        self.band_split: tuple[ESBData, str, "BandSplit"] | None = None
 
     async def _async_update_data(self) -> ESBData:
         """
@@ -98,20 +106,21 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             if esb_data is None:
                 raise UpdateFailed("No data returned from ESB API")
 
+            # Any successful fetch, even an empty one, means login works: leave the CAPTCHA back-off
+            self._renotify_captcha = False
+            if self._captcha_notification_sent:
+                _LOGGER.info("ESB data fetch successful, clearing CAPTCHA notification")
+                self._captcha_notification_sent = False
+                # Restore the configured update interval
+                self.update_interval = self._normal_interval
+                # Dismiss the notification
+                await self._dismiss_captcha_notification()
+
             # Validate that we have some data
             if not hasattr(esb_data, "_data") or len(esb_data._data) == 0:
                 _LOGGER.warning("ESB returned empty dataset for MPRN %s", self.mprn)
                 # Don't fail completely, return empty data to avoid breaking sensors
                 return esb_data
-
-            # Clear CAPTCHA notification flag on success
-            if self._captcha_notification_sent:
-                _LOGGER.info("ESB data fetch successful, clearing CAPTCHA notification")
-                self._captcha_notification_sent = False
-                # Restore normal update interval
-                self.update_interval = DEFAULT_SCAN_INTERVAL
-                # Dismiss the notification
-                await self._dismiss_captcha_notification()
 
             _LOGGER.debug(
                 "Successfully fetched ESB data: today=%.2f kWh, last_30_days=%.2f kWh",
@@ -128,9 +137,10 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             # CAPTCHA detected - send notification and stop updates
             _LOGGER.warning("CAPTCHA detected for MPRN %s: %s", self.mprn, err)
 
-            if not self._captcha_notification_sent:
+            if not self._captcha_notification_sent or self._renotify_captcha:
                 await self._send_captcha_notification()
                 self._captcha_notification_sent = True
+                self._renotify_captcha = False
                 # Set update interval to 7 days to effectively stop polling
                 # (coordinator will still honor manual refresh requests)
                 _LOGGER.error(
@@ -168,6 +178,11 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
             )
             raise UpdateFailed(f"Unexpected error: {err}") from err
 
+    async def async_manual_session_saved(self) -> None:
+        """Try a newly pasted session now; if ESB rejects it too, notify the user again."""
+        self._renotify_captcha = True
+        await self.async_request_refresh()
+
     async def _send_captcha_notification(self) -> None:
         """Send a persistent notification and create a repair issue when CAPTCHA is detected."""
         _LOGGER.info("Sending CAPTCHA notification and creating repair issue for MPRN %s", self.mprn)
@@ -198,12 +213,14 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
                     "**Steps to resolve:**\n\n"
                     f"1. Visit [ESB Networks My Account]({ESB_MYACCOUNT_URL})\n"
                     "2. Complete the CAPTCHA challenge and log in\n"
-                    "3. Leave your browser session active for 5 minutes\n"
-                    "4. The integration will automatically retry\n\n"
+                    "3. In Settings → Devices & services → ESB Smart Meter → Configure → "
+                    "Provide Session Cookies, paste the Cookie and User-Agent request headers "
+                    "from the browser's Network tab\n"
+                    "4. The integration retries straight away with that session\n\n"
                     "**Alternative:** Wait 24-48 hours for automatic clearance.\n\n"
                     f"📋 MPRN: `{self.mprn}`\n\n"
                     "This notification will clear automatically once data retrieval succeeds.\n\n"
-                    "**Need help?** See the [CAPTCHA Setup Guide](https://github.com/your-repo/blob/master/CAPTCHA-SETUP.md) "
+                    "**Need help?** See the [CAPTCHA Setup Guide](https://github.com/antoine-voiry/home-assistant-esb-smart-meter-integration/blob/master/CAPTCHA-SETUP.md) "
                     "for advanced cookie extraction methods."
                 ),
             },

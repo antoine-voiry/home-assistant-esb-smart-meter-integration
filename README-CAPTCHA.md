@@ -583,6 +583,10 @@ esb_smart_meter:
 
 ### 3. **Browser Bookmarklet / Cookie Export** 🔖
 
+> **Superseded (Nov 2026):** this does not work. ESB's login cookies are HttpOnly, so `document.cookie`
+> never contains them. Users copy the Cookie request header from the Network tab instead, see
+> [CAPTCHA-SETUP.md](CAPTCHA-SETUP.md).
+
 **Action:** Provide users with bookmarklet to easily extract session cookies.
 
 **Implementation:**

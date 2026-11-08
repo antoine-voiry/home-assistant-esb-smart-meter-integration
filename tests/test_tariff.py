@@ -7,7 +7,9 @@ import pytest
 
 from custom_components.esb_smart_meter.models import DUBLIN_TZ
 from custom_components.esb_smart_meter.tariff import (
+    BANDS,
     TariffPeriod,
+    split_by_band,
     export_credits,
     fingerprint,
     tariff_periods,
@@ -37,6 +39,45 @@ def _local(y, m, d, h):
 )
 def test_rate_bands_on_a_weekday(hour, expected):
     assert _period().rate_at(_local(2026, 10, 21, hour)) == expected  # Wednesday
+
+
+@pytest.mark.parametrize(
+    "hour, expected",
+    [(1, 0.20), (2, 0.09), (4, 0.09), (5, 0.20), (12, 0.30), (17, 0.40)],
+)
+def test_boost_window_takes_precedence_over_night(hour, expected):
+    period = _period(boost_rate=0.09, boost_start=2, boost_end=5)
+    assert period.rate_at(_local(2026, 10, 24, hour)) == expected  # Saturday: the window applies every day
+
+
+def test_boost_window_can_wrap_midnight():
+    period = _period(boost_rate=0.09, boost_start=23, boost_end=2)
+    assert [period.rate_at(_local(2026, 10, 21, h)) for h in (22, 23, 0, 1, 2)] == [0.30, 0.09, 0.09, 0.09, 0.20]
+
+
+def test_rate_for_returns_each_bands_rate():
+    period = _period(boost_rate=0.09)
+    assert {band: period.rate_for(band) for band in BANDS} == {"day": 0.30, "night": 0.20, "peak": 0.40, "boost": 0.09}
+
+
+def test_period_without_boost_keeps_its_stored_data_and_fingerprint():
+    data = _period().as_data()
+    assert not {"boost_rate", "boost_start", "boost_end"} & set(data)
+    assert TariffPeriod.from_data({**data, "boost_rate": None}) == _period()
+    assert fingerprint([_period()]) != fingerprint([_period(boost_rate=0.09)])
+
+
+def test_boost_round_trips_through_subentry_data():
+    period = _period(boost_rate=0.0996, boost_start=2, boost_end=5)
+    data = period.as_data()
+    assert (data["boost_rate"], data["boost_start"], data["boost_end"]) == (0.0996, 2, 5)
+    assert TariffPeriod.from_data({**data, "boost_start": 2.0, "boost_end": 5.0}) == period
+
+
+def test_usage_cost_uses_boost_rate_in_window():
+    hour = datetime(2026, 10, 21, 2, tzinfo=UTC)  # 03:00 IST
+    costs = usage_costs([(hour, 7.0)], [_period(boost_rate=0.09)])
+    assert costs == [(hour, pytest.approx(7.0 * 0.09 + 0.72 / 24))]
 
 
 def test_weekday_only_peak_is_day_rate_at_weekends():
@@ -135,3 +176,77 @@ def test_validate_period_rejects_empty_bands_and_overlap():
     assert validate_period(_form(night_end=23), set())["night_end"] == "empty_band"
     assert validate_period(_form(peak_end=17), set())["peak_end"] == "empty_band"
     assert validate_period(_form(peak_start=6, peak_end=9), set()) == {"base": "peak_overlaps_night"}
+
+
+def test_validate_period_checks_the_boost_window_only_when_set():
+    assert validate_period(_form(boost_start=3, boost_end=3), set()) == {}  # no boost rate: ignored
+    assert validate_period(_form(boost_rate=0.09, boost_start=2, boost_end=5), set()) == {}
+    assert validate_period(_form(boost_rate=0.09, boost_start=3, boost_end=3), set()) == {"boost_end": "empty_band"}
+
+
+@pytest.mark.parametrize(
+    "hour, band",
+    [(1, "night"), (2, "boost"), (4, "boost"), (5, "night"), (8, "day"), (17, "peak"), (19, "day"), (23, "night")],
+)
+def test_band_at_names_the_band_each_hour_is_billed_in(hour, band):
+    assert _period(boost_rate=0.09).band_at(_local(2026, 10, 21, hour)) == band
+
+
+def test_flat_tariff_is_all_day_band():
+    flat = _period(day_rate=0.29, night_rate=0.29, peak_rate=0.29)
+    assert {flat.band_at(_local(2026, 10, 21, h)) for h in range(24)} == {"day"}
+    with_boost = _period(day_rate=0.29, night_rate=0.29, peak_rate=0.29, boost_rate=0.09)
+    assert {with_boost.band_at(_local(2026, 10, 21, h)) for h in range(24)} == {"day", "boost"}
+
+
+def test_weekday_only_peak_is_day_band_at_weekends():
+    assert _period(peak_weekdays_only=True).band_at(_local(2026, 10, 24, 17)) == "day"  # Saturday
+
+
+def test_bands_and_standing_charge_add_up_to_usage_and_cost():
+    start = datetime(2026, 10, 20, 0, tzinfo=UTC)
+    hourly = [(start + timedelta(hours=i), 0.5 + (i % 7) / 10) for i in range(72)]
+    periods = [
+        _period(boost_rate=0.09),
+        _period(effective_from=date(2026, 10, 21), day_rate=0.32, standing_charge=1.06),
+    ]
+    split = split_by_band(hourly, periods)
+
+    assert sum(v for b in BANDS for _, v in split.usage[b]) == pytest.approx(sum(kwh for _, kwh in hourly))
+    costs = sum(v for b in BANDS for _, v in split.cost[b]) + sum(v for _, v in split.standing)
+    assert costs == pytest.approx(sum(v for _, v in usage_costs(hourly, periods)))
+    hours = [h for h, _ in usage_costs(hourly, periods)]
+    assert all([h for h, _ in split.cost[b]] == hours for b in BANDS)
+    assert [h for h, _ in split.standing] == hours
+
+
+def test_band_usage_covers_hours_before_the_first_period_as_day():
+    start = datetime(2025, 12, 31, 20, tzinfo=UTC)
+    hourly = [(start + timedelta(hours=i), 1.0) for i in range(8)]  # 20:00 UTC 31 Dec .. 03:00 1 Jan
+    split = split_by_band(hourly, [_period()])
+    assert [h for h, _ in split.usage["day"]] == [h for h, _ in hourly]
+    assert sum(v for b in BANDS for _, v in split.usage[b]) == pytest.approx(8.0)
+    assert split.usage["day"][0][1] == 1.0  # 20:00 UTC, before the period: day
+    assert split.cost["night"][0][0] == datetime(2026, 1, 1, 0, tzinfo=UTC)  # costs still start at the period
+
+
+def test_split_of_nothing_is_empty():
+    split = split_by_band([], [_period()])
+    assert all(split.usage[b] == [] and split.cost[b] == [] for b in BANDS) and split.standing == []
+    assert split_by_band([(datetime(2026, 1, 1, tzinfo=UTC), 1.0)], []).standing == []
+
+
+def test_band_priced_at_the_day_rate_counts_as_day():
+    no_peak = _period(peak_rate=0.30)  # day/night plan: peak hours listed but not billed
+    assert no_peak.band_at(_local(2026, 10, 21, 17)) == "day"
+    assert no_peak.band_at(_local(2026, 10, 21, 23)) == "night"
+    no_night = _period(night_rate=0.30)
+    assert no_night.band_at(_local(2026, 10, 21, 23)) == "day"
+    assert no_night.band_at(_local(2026, 10, 21, 17)) == "peak"
+
+
+def test_boost_window_may_overlap_peak_and_wins():
+    period = _period(boost_rate=0.09, boost_start=16, boost_end=18)
+    assert validate_period(_form(boost_rate=0.09, boost_start=16, boost_end=18), set()) == {}
+    assert period.band_at(_local(2026, 10, 21, 17)) == "boost"
+    assert period.band_at(_local(2026, 10, 21, 18)) == "peak"

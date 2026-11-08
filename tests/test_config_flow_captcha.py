@@ -12,6 +12,7 @@ from custom_components.esb_smart_meter.config_flow import (
 from custom_components.esb_smart_meter.coordinator import ESBRuntimeData
 from custom_components.esb_smart_meter.const import (
     CONF_MANUAL_COOKIES,
+    CONF_MANUAL_USER_AGENT,
     CONF_MPRN,
     CONF_PASSWORD,
     CONF_UPDATE_INTERVAL,
@@ -124,7 +125,7 @@ class TestOptionsFlow:
             result = await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: cookie_string})
 
             assert result["type"] == "create_entry"
-            mock_session.save_manual_cookies.assert_called_once_with(cookie_string)
+            mock_session.save_manual_cookies.assert_called_once_with(cookie_string, user_agent=None)
 
     @pytest.mark.asyncio
     async def test_manual_cookies_keeps_existing_options(self, mock_hass, mock_config_entry):
@@ -144,7 +145,7 @@ class TestOptionsFlow:
     async def test_manual_cookies_triggers_refresh(self, mock_hass, mock_config_entry):
         """New cookies are used right away instead of after the 7-day CAPTCHA back-off."""
         coordinator = Mock()
-        coordinator.async_request_refresh = AsyncMock()
+        coordinator.async_manual_session_saved = AsyncMock()
         mock_config_entry.state = ConfigEntryState.LOADED
         mock_config_entry.runtime_data = ESBRuntimeData(coordinator=coordinator, session=Mock())
         flow = ESBSmartMeterOptionsFlow(mock_config_entry)
@@ -152,8 +153,12 @@ class TestOptionsFlow:
 
         with patch("custom_components.esb_smart_meter.config_flow.SessionManager") as mock_session_class:
             mock_session_class.return_value.save_manual_cookies = AsyncMock(return_value=True)
-            await flow.async_step_manual_cookies(user_input={CONF_MANUAL_COOKIES: "a=1"})
+            await flow.async_step_manual_cookies(
+                user_input={CONF_MANUAL_COOKIES: "a=1", CONF_MANUAL_USER_AGENT: "  UA  "}
+            )
 
+        mock_session_class.return_value.save_manual_cookies.assert_called_once_with("a=1", user_agent="  UA  ")
+        coordinator.async_manual_session_saved.assert_called_once()
         mock_hass.async_create_task.assert_called_once()
         mock_hass.async_create_task.call_args.args[0].close()  # silence "never awaited"
 

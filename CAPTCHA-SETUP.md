@@ -20,29 +20,16 @@ If you see a notification saying "ESB Smart Meter: Manual Login Required", it me
 3. Log in with your ESB Networks credentials
 4. Complete the CAPTCHA challenge if shown
 
-### Step 2: Extract Cookies
+### Step 2: Copy the Cookie and User-Agent Request Headers
 
-#### Option A: Using Browser Console (Recommended)
+ESB's login cookies are HttpOnly, so `document.cookie` (and any bookmarklet built on it) cannot see
+them. Copy them from the Network tab instead:
 
 1. With the ESB website still open and logged in, press **F12** (or **Cmd+Option+I** on Mac) to open Developer Tools
-2. Click on the **Console** tab
-3. Type the following command and press Enter:
-   ```javascript
-   document.cookie
-   ```
-4. The console will display a long string of text - this is your cookie data
-5. **Right-click** on the output and select **Copy**
-
-#### Option B: Using the Bookmarklet (Easier!)
-
-1. Create a new bookmark in your browser
-2. Set the bookmark URL to:
-   ```javascript
-   javascript:(function(){const c=document.cookie;if(!c){alert('No cookies found. Make sure you are logged in.');return;}prompt('Copy these cookies (Ctrl+C or Cmd+C):',c);})();
-   ```
-3. Name it "Copy ESB Cookies" or similar
-4. After logging in to ESB Networks, click this bookmark
-5. A popup will appear with your cookies - copy them
+2. Click on the **Network** tab, then reload the page
+3. Click the first request to `myaccount.esbnetworks.ie`
+4. Under **Request Headers**, copy the whole **Cookie** value
+5. From the same request, copy the **User-Agent** value
 
 ### Step 3: Provide Cookies to Home Assistant
 
@@ -51,8 +38,13 @@ If you see a notification saying "ESB Smart Meter: Manual Login Required", it me
 3. Click the **three dots** menu (⋮) next to ESB Smart Meter
 4. Select **Configure**
 5. Choose **"Provide Session Cookies (CAPTCHA Bypass)"**
-6. Paste the cookie string you copied in Step 2
+6. Paste the Cookie value into the first field and the User-Agent into the second
 7. Click **Submit**
+
+If ESB rejects the pasted session, the integration does not fall back to a scripted login (that would
+bring the CAPTCHA back) for 24 hours, even across restarts. It shows the CAPTCHA notification again,
+so copy a fresh Cookie header. A timeout or an ESB outage does not count as a rejection: the session
+is kept and tried again on the next update.
 
 ### Step 4: Verify It's Working
 
@@ -64,10 +56,12 @@ If you see a notification saying "ESB Smart Meter: Manual Login Required", it me
 
 A valid cookie string looks like this:
 ```
-.AspNetCore.Antiforgery.abcd1234=xyz789...; ARRAffinity=abcd1234...; .AspNetCore.Session=xyz789...
+.AspNetCore.Antiforgery.abcd1234=xyz789...; ARRAffinity=abcd1234...; .AspNetCore.Cookies=xyz789...
 ```
 
 **Key points:**
+- It must include `.AspNetCore.Cookies`, the login cookie that `document.cookie` cannot see
+- A leading `Cookie:` and line breaks from the copy are fine
 - Multiple cookies separated by semicolons (`;`)
 - Each cookie has format: `name=value`
 - The string can be quite long (100-500+ characters)
@@ -83,9 +77,10 @@ A valid cookie string looks like this:
 - Browser auto-formatted the text when copying
 
 **Solutions:**
-1. Try again, making sure to copy the entire cookie string
-2. Use the bookmarklet method (Option B) instead
-3. Make sure you're still logged in when copying cookies
+1. Try again, making sure to copy the entire Cookie request header from the Network tab
+2. Make sure you're still logged in when copying cookies
+3. In the logs, `Session validation failed - ESB answered HTTP 302 (redirect host: login.esbnetworks.ie)`
+   means the login cookie was not among those pasted
 
 ### Sensors still not updating
 
@@ -108,37 +103,12 @@ A valid cookie string looks like this:
 
 - **Cookies contain authentication tokens** - treat them like passwords
 - Never share your cookie string with others
-- Cookies are stored locally in your Home Assistant installation
+- Cookies are stored locally in `<config>/.storage/esb_smart_meter/`, which config backups usually exclude
+- Before 1.4.1 they were stored in `<config>/esb_smart_meter/`. If you back up `/config` with git,
+  remove `esb_smart_meter/session_cache_*.json` from your repository history and log out of
+  ESB Networks to invalidate the session
 - They automatically expire after ~7 days for security
 - Home Assistant uses these cookies exactly as your browser would
-
-## Bookmarklet Code (Advanced)
-
-For reference, here's the full bookmarklet code with comments:
-
-```javascript
-javascript:(function(){
-  // Get all cookies from current page
-  const cookies = document.cookie;
-  
-  // Check if any cookies exist
-  if (!cookies || cookies.length === 0) {
-    alert('No cookies found. Make sure you are logged in to ESB Networks.');
-    return;
-  }
-  
-  // Display cookies in a prompt dialog for easy copying
-  prompt(
-    'Copy these cookies (Ctrl+C or Cmd+C):\n\nThen paste in Home Assistant integration settings.',
-    cookies
-  );
-})();
-```
-
-To install:
-1. Create new bookmark
-2. Paste the entire code above as the bookmark URL
-3. Name it appropriately
 
 ## Privacy & Legal
 

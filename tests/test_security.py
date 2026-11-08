@@ -12,9 +12,10 @@ class TestAPISecurityInjection:
     """Test API security against injection attacks."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
@@ -93,9 +94,10 @@ class TestAPISecurityAuth:
     """Test authentication security."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
@@ -160,9 +162,10 @@ class TestAPISecurityDataValidation:
     """Test data validation and sanitization security."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
@@ -230,9 +233,10 @@ class TestAPISecurityCAPTCHA:
     """Test CAPTCHA detection security."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
@@ -291,9 +295,10 @@ class TestAPISecurityRateLimiting:
     """Test rate limiting and abuse prevention."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
@@ -341,9 +346,10 @@ class TestAPISecurityCornerCases:
     """Test corner cases with security implications."""
 
     @pytest.fixture
-    def mock_hass(self):
+    def mock_hass(self, tmp_path):
         """Create mock Home Assistant."""
         hass = MagicMock()
+        hass.config.path = lambda *parts: str(tmp_path.joinpath(*parts))
         hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
         hass.async_create_task = MagicMock(side_effect=_async_create_task_handler)
         return hass
