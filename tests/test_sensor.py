@@ -1247,13 +1247,15 @@ class TestBandSplitCache:
 
     def test_split_is_recomputed_when_the_tariff_changes(self):
         band_sensors, esb_data = self._sensors_and_data()
-        sensor = band_sensors[len(BANDS)]  # BandCostSensor for "day"
+        # The fixture hour follows the clock, so check every band's cost: one of them holds it
+        cost_sensors = band_sensors[len(BANDS):2 * len(BANDS)]
+        rates = {"day_rate": 0.5, "night_rate": 0.5, "peak_rate": 0.5}
         with patch(
             "custom_components.esb_smart_meter.sensor.split_by_band", wraps=sensor_module.split_by_band
         ) as split:
-            first = sensor._hourly(esb_data=esb_data)
-            sensor._entry.subentries["0"].data = TestCostSensors.PERIOD.as_data() | {"day_rate": 0.5, "night_rate": 0.5}
-            second = sensor._hourly(esb_data=esb_data)
+            first = [s._hourly(esb_data=esb_data) for s in cost_sensors]
+            cost_sensors[0]._entry.subentries["0"].data = TestCostSensors.PERIOD.as_data() | rates
+            second = [s._hourly(esb_data=esb_data) for s in cost_sensors]
         assert split.call_count == 2
         assert first != second
 
