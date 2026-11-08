@@ -627,12 +627,17 @@ class ESBDataApi:
         """Keep the saved ESB session from expiring between polls. Never logs in.
 
         Returns one of the SESSION_* states, or None when a poll is using the session right now
-        (it confirms or replaces the session itself) or a new session was pasted meanwhile.
+        (it confirms or replaces the session itself).
         """
         if self._session_lock.locked():
             return None
         async with self._session_lock:
             return await self._session_manager.keep_alive(self._session)
+
+    async def save_manual_cookies(self, cookie_string: str, user_agent: str | None = None) -> bool:
+        """Save a pasted browser session, waiting for any poll or keep-alive using the current one."""
+        async with self._session_lock:
+            return await self._session_manager.save_manual_cookies(cookie_string, user_agent=user_agent)
 
     @property
     def session_status(self) -> dict[str, Any]:

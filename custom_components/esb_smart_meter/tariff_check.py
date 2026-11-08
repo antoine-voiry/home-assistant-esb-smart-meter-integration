@@ -33,7 +33,10 @@ def async_check_tariff(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 @callback
 def async_remove_tariff_issue(hass: HomeAssistant, entry_id: str) -> None:
-    """Drop the entry's issue (tariff added, entry unloaded or removed)."""
+    """Drop the entry's issue (tariff added, or entry removed).
+
+    Not on unload: deleting an issue forgets that the user chose to ignore it.
+    """
     ir.async_delete_issue(hass, DOMAIN, _issue_id(entry_id))
 
 

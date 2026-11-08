@@ -146,18 +146,20 @@ class TestOptionsFlow:
         """New cookies are used right away instead of after the 7-day CAPTCHA back-off."""
         coordinator = Mock()
         coordinator.async_manual_session_saved = AsyncMock()
+        coordinator.esb_api.save_manual_cookies = AsyncMock(return_value=True)
         mock_config_entry.state = ConfigEntryState.LOADED
         mock_config_entry.runtime_data = ESBRuntimeData(coordinator=coordinator, session=Mock())
         flow = ESBSmartMeterOptionsFlow(mock_config_entry)
         flow.hass = mock_hass
 
         with patch("custom_components.esb_smart_meter.config_flow.SessionManager") as mock_session_class:
-            mock_session_class.return_value.save_manual_cookies = AsyncMock(return_value=True)
             await flow.async_step_manual_cookies(
                 user_input={CONF_MANUAL_COOKIES: "a=1", CONF_MANUAL_USER_AGENT: "  UA  "}
             )
 
-        mock_session_class.return_value.save_manual_cookies.assert_called_once_with("a=1", user_agent="  UA  ")
+        # A loaded entry saves through its running API (under the session lock), not a second manager
+        coordinator.esb_api.save_manual_cookies.assert_awaited_once_with("a=1", user_agent="  UA  ")
+        mock_session_class.assert_not_called()
         coordinator.async_manual_session_saved.assert_called_once()
         mock_hass.async_create_task.assert_called_once()
         mock_hass.async_create_task.call_args.args[0].close()  # silence "never awaited"

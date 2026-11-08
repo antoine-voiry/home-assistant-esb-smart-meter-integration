@@ -190,17 +190,23 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
             else:
                 # Validate and save cookies
                 mprn = self._config_entry.data[CONF_MPRN]
-                session_manager = SessionManager(self.hass, mprn)
+                user_agent = user_input.get(CONF_MANUAL_USER_AGENT)
+                loaded = self._config_entry.state is config_entries.ConfigEntryState.LOADED
 
-                success = await session_manager.save_manual_cookies(
-                    cookie_string, user_agent=user_input.get(CONF_MANUAL_USER_AGENT)
-                )
+                if loaded:
+                    # Through the running API, so a poll or keep-alive using the old session
+                    # cannot overwrite the paste or vouch for it
+                    coordinator = self._config_entry.runtime_data.coordinator
+                    success = await coordinator.esb_api.save_manual_cookies(cookie_string, user_agent=user_agent)
+                else:
+                    success = await SessionManager(self.hass, mprn).save_manual_cookies(
+                        cookie_string, user_agent=user_agent
+                    )
 
                 if success:
                     _LOGGER.info("Manual cookies saved successfully for MPRN %s", mprn)
-                    if self._config_entry.state is config_entries.ConfigEntryState.LOADED:
+                    if loaded:
                         # Use the new cookies now rather than after the CAPTCHA back-off interval
-                        coordinator = self._config_entry.runtime_data.coordinator
                         self.hass.async_create_task(coordinator.async_manual_session_saved())
                     return self.async_create_entry(title="", data=dict(self._config_entry.options))
 

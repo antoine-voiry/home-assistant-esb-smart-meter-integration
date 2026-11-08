@@ -114,7 +114,7 @@ class TestKeepAliveRequest:
     async def test_alive_saves_reissued_cookies_through_save_session(self, tmp_path):
         sm = SessionManager(_hass(tmp_path), MPRN)
         await _session(sm, {".AspNetCore.Cookies": "old", "ARRAffinity": "a"},
-                       download_token="tok", source=SESSION_SOURCE_MANUAL)
+                       download_token="tok", source=SESSION_SOURCE_MANUAL, confirmed=True)
         portal = _Portal(reissue={".AspNetCore.Cookies": "new"})
 
         with patch.object(sm, "save_session", wraps=sm.save_session) as save:
@@ -139,18 +139,32 @@ class TestKeepAliveRequest:
     @pytest.mark.asyncio
     async def test_alive_without_new_cookies_only_confirms(self, tmp_path):
         sm = SessionManager(_hass(tmp_path), MPRN)
-        before = await _session(sm, download_token="tok")
-        assert before["last_ok"] is None  # saved unconfirmed, like a paste
+        before = await _session(sm, download_token="tok", confirmed=True)
+        before["expires_at"] = (dt_util.utcnow() + timedelta(days=1)).isoformat()  # close to its 14 days
+        sm._write_session_file(before)
 
         with patch.object(sm, "save_session", wraps=sm.save_session) as save:
             assert await sm.keep_alive(_Portal()) == SESSION_ALIVE
 
         save.assert_not_awaited()
         after = _read(sm)
-        assert after["last_ok"] and after["expired_at"] is None
-        assert {k: v for k, v in after.items() if k not in ("last_ok", "expired_at")} == {
-            k: v for k, v in before.items() if k != "last_ok"
+        assert after["last_ok"] > before["last_ok"] and after["expired_at"] is None
+        # ESB still accepts it, so it is not thrown away at the end of its first 14 days
+        assert after["expires_at"] > (dt_util.utcnow() + timedelta(days=13)).isoformat()
+        unchanged = ("last_ok", "expired_at", "expires_at")
+        assert {k: v for k, v in after.items() if k not in unchanged} == {
+            k: v for k, v in before.items() if k not in unchanged
         }
+
+    @pytest.mark.asyncio
+    async def test_a_session_no_poll_has_validated_is_not_pinged(self, tmp_path):
+        """A fresh paste is validated by the poll it triggers, never vouched for by /ac/e."""
+        sm = SessionManager(_hass(tmp_path), MPRN)
+        await _session(sm, source=SESSION_SOURCE_MANUAL)
+        portal = _Portal()
+        assert await sm.keep_alive(portal) == SESSION_NONE
+        assert portal.requests == []
+        assert _read(sm)["last_ok"] is None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [302, 401, 403])
@@ -211,26 +225,6 @@ class TestKeepAliveAnswers:
         assert await sm.keep_alive(_Portal(status=204)) == SESSION_ALIVE
         assert _read(sm)["expired_at"] is None
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", [200, 302])
-    async def test_a_session_pasted_during_the_request_is_left_alone(self, tmp_path, status):
-        sm = SessionManager(_hass(tmp_path), MPRN)
-        await _session(sm, {".AspNetCore.Cookies": "old"}, confirmed=True)
-        pasted = SessionManager(_hass(tmp_path), MPRN)  # the paste flow's own manager
-        portal = _Portal(status=status, reissue={".AspNetCore.Cookies": "reissued"})
-        get = portal.get
-
-        def paste_then_answer(*args, **kwargs):
-            pasted._write_session_file({**_read(sm), "cookies": {".AspNetCore.Cookies": "pasted"}, "last_ok": None})
-            return get(*args, **kwargs)
-
-        portal.get = paste_then_answer
-        assert await sm.keep_alive(portal) is None  # nothing known about the new session
-
-        stored = _read(sm)
-        assert stored["cookies"] == {".AspNetCore.Cookies": "pasted"}
-        assert stored.get("expired_at") is None and stored["last_ok"] is None
-
 
 class TestKeepAliveNeverLogsIn:
     @staticmethod
@@ -260,6 +254,20 @@ class TestKeepAliveNeverLogsIn:
             assert await asyncio.wait_for(api.keep_alive(), timeout=2) is None
         assert portal.requests == []
         assert await api.keep_alive() == SESSION_ALIVE  # control: the same call, unlocked
+
+    @pytest.mark.asyncio
+    async def test_a_paste_waits_for_a_poll_using_the_old_session(self, tmp_path):
+        api = self._api(tmp_path, _Portal())
+        await _session(api._session_manager, confirmed=True)
+
+        async with api._session_lock:
+            paste = asyncio.ensure_future(api.save_manual_cookies(".AspNetCore.Cookies=pasted"))
+            await asyncio.wait({paste}, timeout=0.2)  # real loop turns (asyncio.sleep is mocked here)
+            assert not paste.done()  # nothing written while the poll holds the session
+            assert _read(api._session_manager)["cookies"] == {".AspNetCore.Cookies": "old"}
+        assert await paste is True
+        stored = _read(api._session_manager)
+        assert stored["cookies"] == {".AspNetCore.Cookies": "pasted"} and stored["last_ok"] is None
 
     @staticmethod
     def _coordinator(state):

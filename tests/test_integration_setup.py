@@ -548,10 +548,15 @@ async def test_no_tariff_issue_survives_a_failed_first_download(
 
 
 @pytest.mark.asyncio
-async def test_no_tariff_issue_is_cleared_on_unload(recorder_mock, hass, enable_custom_integrations, entry, session):
+async def test_ignored_no_tariff_issue_stays_ignored_after_a_reload(
+    recorder_mock, hass, enable_custom_integrations, entry, session
+):
     await _setup(hass, entry, AsyncMock(return_value=_esb_data()))
     issues = ir.async_get(hass)
-    assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is not None
+    issues.async_ignore(DOMAIN, f"no_tariff_{entry.entry_id}", True)
 
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is None
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", AsyncMock(return_value=_esb_data())):
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}").dismissed_version is not None

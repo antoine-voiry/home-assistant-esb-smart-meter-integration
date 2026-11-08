@@ -307,9 +307,15 @@ class SessionManager:
             self._write_session_file({**data, **changes})
 
     async def mark_confirmed(self) -> None:
-        """Record that ESB has just accepted the saved session."""
+        """Record that ESB has just accepted the saved session, which also pushes back its expiry."""
+        now = dt_util.utcnow()
         await self._hass.async_add_executor_job(
-            self._update_session_file, {"last_ok": dt_util.utcnow().isoformat(), "expired_at": None}
+            self._update_session_file,
+            {
+                "last_ok": now.isoformat(),
+                "expired_at": None,
+                "expires_at": (now + timedelta(hours=SESSION_EXPIRY_HOURS)).isoformat(),
+            },
         )
 
     async def mark_expired(self) -> None:
@@ -318,19 +324,22 @@ class SessionManager:
             self._update_session_file, {"expired_at": dt_util.utcnow().isoformat()}
         )
 
-    async def keep_alive(self, http_session: aiohttp.ClientSession) -> str | None:
+    async def keep_alive(self, http_session: aiohttp.ClientSession) -> str:
         """Use the saved session the way an open portal tab does (GET /ac/e), so it does not expire.
 
         ESB's session lasts 20 minutes without use and is re-issued on use; cookies it re-issues
         are saved. This never logs in: a session ESB no longer accepts is only marked expired,
-        and the next poll decides what to do. Returns one of the SESSION_* states, or None when
-        a new session was saved (pasted) while the request was out.
+        and the next poll decides what to do. Returns one of the SESSION_* states.
         """
         session_data = await self._hass.async_add_executor_job(self._read_session_file)
         if not session_data or not self._is_session_valid(session_data) or session_data.get("rejected_at"):
             return SESSION_NONE
         if session_data.get("expired_at"):
             return SESSION_EXPIRED  # not again until a poll replaces or confirms the session
+        if not session_data.get("last_ok"):
+            # Only a session a poll has validated: /ac/e is a light endpoint, and its answer must
+            # not vouch for a paste ESB never accepted (last_ok turns a failure into "expired")
+            return SESSION_NONE
         user_agent = session_data.get("user_agent") or USER_AGENTS[0]
         self.load_cookies_to_jar(http_session.cookie_jar, session_data["cookies"])
         headers = {
@@ -357,12 +366,6 @@ class SessionManager:
         if status < 200 or status == 429 or status >= 500:
             _LOGGER.warning("ESB session keep-alive answered HTTP %d", status)
             return SESSION_ERROR
-        # The paste flow saves through its own SessionManager, outside the API's lock: never
-        # overwrite or mark a session saved while the request was out with this one's result
-        current = await self._hass.async_add_executor_job(self._read_session_file)
-        if not current or current.get("cookies") != session_data["cookies"]:
-            _LOGGER.debug("Session replaced during the keep-alive; leaving the new one alone")
-            return None
         if 200 <= status < 300:
             cookies = self.extract_cookies_from_jar(http_session.cookie_jar)
             if cookies != session_data["cookies"]:

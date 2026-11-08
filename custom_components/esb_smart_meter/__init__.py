@@ -75,9 +75,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
         await session.close()
         raise
 
-    # Registered only now: HA also runs unload callbacks when setup fails, which would hide the notice
-    entry.async_on_unload(lambda: async_remove_tariff_issue(hass, entry.entry_id))
-
     entry.runtime_data = ESBRuntimeData(coordinator=coordinator, session=session, settings=_settings_snapshot(entry))
 
     # Option changes reload; tariff subentry changes re-cost from the data in memory
@@ -89,7 +86,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
     if entry.options.get(CONF_KEEP_ALIVE, DEFAULT_KEEP_ALIVE):
         # Keep ESB's 20-minute session alive between polls, as an open portal tab does
         async def _keep_alive(_now: Any = None) -> None:
-            await coordinator.async_keep_alive()
+            if not session.closed:  # unloading closes the session before the timers stop
+                await coordinator.async_keep_alive()
 
         entry.async_on_unload(async_track_time_interval(hass, _keep_alive, KEEPALIVE_INTERVAL))
         entry.async_on_unload(async_call_later(hass, KEEPALIVE_FIRST_DELAY, _keep_alive))
