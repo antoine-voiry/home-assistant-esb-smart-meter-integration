@@ -7,13 +7,14 @@ from datetime import datetime, timedelta, timezone
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory, UnitOfEnergy
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL
-from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator
+from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator, session_signal
 from .import_state import ImportState
 from .migration import async_migrate_legacy_history
 from .models import ESBData
@@ -45,7 +46,7 @@ _LEGACY_OBJECT_IDS = {
     )},
     "usage_cost_total": "esb_electricity_usage_cost_total",
     "export_credit_total": "esb_electricity_export_credit_total",
-    **{key: f"esb_smart_meter_{key}" for key in ("last_update", "api_status", "data_age", "circuit_breaker_status")},
+    **{key: f"esb_smart_meter_{key}" for key in ("last_update", "api_status", "data_age", "circuit_breaker_status", "session_confirmed")},
     # Per-band breakdown (no legacy ids; these follow the same naming)
     **{f"usage_{band}_total": f"esb_electricity_usage_{band}_total" for band in BANDS},
     **{f"usage_cost_{band}_total": f"esb_electricity_usage_cost_{band}_total" for band in BANDS},
@@ -102,6 +103,7 @@ async def async_setup_entry(
         ApiStatusSensor(coordinator=coordinator, mprn=mprn),
         DataAgeSensor(coordinator=coordinator, mprn=mprn),
         CircuitBreakerStatusSensor(coordinator=coordinator, mprn=mprn),
+        SessionConfirmedSensor(coordinator=coordinator, mprn=mprn, entry_id=entry.entry_id),
         # Breakdown by tariff band, for the Energy dashboard (hidden entities; the statistics are what matter)
         *(BandUsageSensor(coordinator=coordinator, mprn=mprn, entry=entry, band=band) for band in BANDS),
         *(BandCostSensor(coordinator=coordinator, mprn=mprn, entry=entry, band=band) for band in BANDS),
@@ -973,3 +975,64 @@ class CircuitBreakerStatusSensor(SensorEntity):
             "half_open": "mdi:refresh-circle",
             "unknown": "mdi:help-circle",
         }.get(state, "mdi:help-circle")
+
+
+class SessionConfirmedSensor(SensorEntity):
+    """When ESB last accepted the saved session, at a poll or a keep-alive.
+
+    A timestamp on purpose: with the keep-alive on it moves every 9 minutes while the session
+    lives, so its age says whether there is a live session now. Unknown means no session.
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_state_class = None
+    _attr_native_unit_of_measurement = None
+    _attr_icon = "mdi:account-clock"
+    _attr_should_poll = False  # updated by polls and keep-alives, never on a timer of its own
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry_id: str) -> None:
+        """Initialize the sensor."""
+        super().__init__()
+        self.coordinator = coordinator
+        self._mprn = mprn
+        self._entry_id = entry_id
+        self._attr_translation_key = "session_confirmed"
+        self.entity_id = _legacy_entity_id("session_confirmed")
+        self._attr_device_info = _device_info(mprn)
+        self._attr_unique_id = f"{mprn}_session_confirmed"
+
+    async def async_added_to_hass(self) -> None:
+        """Follow polls and keep-alives."""
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_update))
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, session_signal(self._entry_id), self._handle_update)
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        """Write the new state."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> datetime | None:
+        """The last time ESB accepted the session."""
+        last_ok = self.coordinator.esb_api.session_status.get("last_ok")
+        if not last_ok:
+            return None
+        try:
+            return datetime.fromisoformat(last_ok)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Where the session came from and what the keep-alive last found (never its cookies)."""
+        status = self.coordinator.esb_api.session_status
+        return {
+            "source": status.get("source"),
+            "expired_at": status.get("expired_at"),
+            "rejected_at": status.get("rejected_at"),
+            "keep_alive": self.coordinator.keep_alive_state,
+        }

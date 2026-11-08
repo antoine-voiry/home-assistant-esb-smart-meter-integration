@@ -6,12 +6,24 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 
 from .api_client import ESBDataApi
-from .const import CONF_MPRN, CONF_PASSWORD, CONF_UPDATE_INTERVAL, CONF_USERNAME, DOMAIN
+from .const import (
+    CONF_KEEP_ALIVE,
+    CONF_MPRN,
+    CONF_PASSWORD,
+    CONF_UPDATE_INTERVAL,
+    CONF_USERNAME,
+    DEFAULT_KEEP_ALIVE,
+    DOMAIN,
+    KEEPALIVE_FIRST_DELAY,
+    KEEPALIVE_INTERVAL,
+)
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator, ESBRuntimeData
 from .energy_check import async_remove_energy_issue, async_setup_energy_check
 from .import_state import COST_SERIES, ImportState
+from .tariff_check import async_check_tariff, async_remove_tariff_issue
 from .utils import create_esb_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +64,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
         update_interval=update_interval,
     )
 
+    # Warn (Repairs) while there is no tariff period, so the cost statistics stay empty.
+    # Checked before the first download, which can fail (CAPTCHA, outage) and retry for days.
+    async_check_tariff(hass, entry)
+
     # Fetch initial data; HA retries setup on failure, so don't leak a session each time
     try:
         await coordinator.async_config_entry_first_refresh()
@@ -66,6 +82,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
 
     # Forward setup to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    if entry.options.get(CONF_KEEP_ALIVE, DEFAULT_KEEP_ALIVE):
+        # Keep ESB's 20-minute session alive between polls, as an open portal tab does
+        async def _keep_alive(_now: Any = None) -> None:
+            if not session.closed:  # unloading closes the session before the timers stop
+                await coordinator.async_keep_alive()
+
+        entry.async_on_unload(async_track_time_interval(hass, _keep_alive, KEEPALIVE_INTERVAL))
+        entry.async_on_unload(async_call_later(hass, KEEPALIVE_FIRST_DELAY, _keep_alive))
 
     # Warn (Repairs) if the Energy dashboard uses ESB entities instead of the ESB statistics
     await async_setup_energy_check(hass)
@@ -87,6 +112,7 @@ async def _async_reload_on_update(hass: HomeAssistant, entry: ESBConfigEntry) ->
     """
     runtime = entry.runtime_data
     if runtime.settings == _settings_snapshot(entry):
+        async_check_tariff(hass, entry)
         runtime.coordinator.async_update_listeners()
         return
     await hass.config_entries.async_reload(entry.entry_id)
@@ -113,3 +139,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> None
     for series in COST_SERIES:
         await ImportState(hass, entry.entry_id, series).async_remove()
     async_remove_energy_issue(hass, entry.entry_id)
+    async_remove_tariff_issue(hass, entry.entry_id)

@@ -41,7 +41,8 @@
         "description": "Current update interval: {current_interval} hours",
         "menu_options": {
           "update_interval": "Change update interval",
-          "manual_cookies": "Provide Session Cookies (CAPTCHA Bypass)"
+          "manual_cookies": "Provide Session Cookies (CAPTCHA Bypass)",
+          "keep_alive": "Keep the ESB session alive"
         }
       },
       "update_interval": {
@@ -51,6 +52,16 @@
         },
         "data_description": {
           "update_interval": "How often to download data from ESB (1-168 hours). ESB publishes data with a 1-2 day delay, so 24 hours is recommended."
+        }
+      },
+      "keep_alive": {
+        "title": "Session keep-alive",
+        "description": "ESB signs a session out after 20 minutes without use, so with a daily update every update starts with a new login, which is when ESB may ask for a CAPTCHA. With the keep-alive on, the integration makes the same small request an open ESB tab makes (every 9 minutes) and keeps one session alive, for example one you provided after a CAPTCHA.",
+        "data": {
+          "keep_alive": "Keep the session alive between updates"
+        },
+        "data_description": {
+          "keep_alive": "Off by default: it contacts ESB about 160 times a day instead of once per update. If ESB ends the session anyway, the next update logs in as usual."
         }
       },
       "manual_cookies": {
@@ -72,6 +83,10 @@
     }
   },
   "issues": {
+    "no_tariff": {
+      "title": "ESB costs need a tariff period",
+      "description": "Meter {mprn} has no tariff period, so its cost statistics (usage cost, export credit, the cost by tariff band and the standing charge) stay empty. To track costs, open Settings → Devices & services → ESB Smart Meter and select **Add tariff period**. This notice clears itself once a period is added; if you don't need costs, ignore it."
+    },
     "captcha_required": {
       "title": "ESB Networks requires CAPTCHA verification",
       "description": "ESB Networks is asking for a CAPTCHA for meter {mprn}. Log in at {esb_url} in your browser, then open Settings → Devices & services → ESB Smart Meter → Configure → Provide Session Cookies and paste your cookies. Updates resume automatically once the cookies work."
@@ -142,6 +157,9 @@
       },
       "circuit_breaker_status": {
         "name": "Circuit breaker status"
+      },
+      "session_confirmed": {
+        "name": "Session last confirmed"
       },
       "usage_day_total": {
         "name": "Day usage total"

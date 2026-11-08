@@ -1,7 +1,7 @@
 # Test dependencies for ESB Smart Meter Integration
 # pytest-homeassistant-custom-component pins Home Assistant exactly:
-#   0.13.372 == homeassistant 2026.10.1 (the version running in production).
-# Bump this when production HA is upgraded.
-pytest-homeassistant-custom-component==0.13.373
+#   0.13.375 == homeassistant 2026.10.4, the newest release on PyPI (production runs 2026.11.0).
+# Bump this when a release for the production HA version is out.
+pytest-homeassistant-custom-component==0.13.375
 pytest-cov>=6.0.0
 pytest-aiohttp>=1.1.1

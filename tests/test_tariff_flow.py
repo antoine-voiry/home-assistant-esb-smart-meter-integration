@@ -100,7 +100,7 @@ async def test_add_period_with_boost_window(recorder_mock, hass, enable_custom_i
 async def test_add_period_without_boost_stores_no_boost_keys(recorder_mock, hass, enable_custom_integrations, entry):
     result = await _start(hass, entry)
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], {"preset": "custom"})
-    result = await hass.config_entries.subentries.async_configure(result["flow_id"], RATES)
+    await hass.config_entries.subentries.async_configure(result["flow_id"], RATES)
 
     created = next(s for s in entry.subentries.values() if s.unique_id == "2026-10-05")
     assert "boost_rate" not in created.data

@@ -344,7 +344,9 @@ class TestIntegrationSetup:
 
         with patch("custom_components.esb_smart_meter.create_esb_session") as mock_create_session, patch(
             "custom_components.esb_smart_meter.ESBDataApi"
-        ), patch("custom_components.esb_smart_meter.ESBDataUpdateCoordinator") as mock_coordinator_class:
+        ), patch("custom_components.esb_smart_meter.ESBDataUpdateCoordinator") as mock_coordinator_class, patch(
+            "custom_components.esb_smart_meter.async_check_tariff"
+        ):
             # Create different mocks for each entry
             mock_session1 = MagicMock()
             mock_session2 = MagicMock()
@@ -391,6 +393,20 @@ async def test_remove_entry_clears_energy_issue():
     entry.entry_id = "entry1"
     with patch("custom_components.esb_smart_meter.ImportState") as state_cls, patch(
         "custom_components.esb_smart_meter.async_remove_energy_issue"
+    ) as remove_issue:
+        state_cls.return_value.async_remove = AsyncMock()
+        await async_remove_entry(hass, entry)
+
+    remove_issue.assert_called_once_with(hass, "entry1")
+
+
+@pytest.mark.asyncio
+async def test_remove_entry_clears_tariff_issue():
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.entry_id = "entry1"
+    with patch("custom_components.esb_smart_meter.ImportState") as state_cls, patch(
+        "custom_components.esb_smart_meter.async_remove_tariff_issue"
     ) as remove_issue:
         state_cls.return_value.async_remove = AsyncMock()
         await async_remove_entry(hass, entry)

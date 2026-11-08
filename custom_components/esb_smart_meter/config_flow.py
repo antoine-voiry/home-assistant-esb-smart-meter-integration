@@ -11,12 +11,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
+    CONF_KEEP_ALIVE,
     CONF_MANUAL_COOKIES,
     CONF_MANUAL_USER_AGENT,
     CONF_MPRN,
     CONF_PASSWORD,
     CONF_UPDATE_INTERVAL,
     CONF_USERNAME,
+    DEFAULT_KEEP_ALIVE,
     DOMAIN,
     MPRN_LENGTH,
     SUBENTRY_TARIFF,
@@ -133,7 +135,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
         """Manage the options."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["update_interval", "manual_cookies"],
+            menu_options=["update_interval", "manual_cookies", "keep_alive"],
             description_placeholders={
                 "current_interval": self._config_entry.options.get(CONF_UPDATE_INTERVAL, 24),
             },
@@ -160,6 +162,22 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
             data_schema=data_schema,
         )
 
+    async def async_step_keep_alive(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Turn the session keep-alive on or off (off by default)."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data={**self._config_entry.options, **user_input})
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_KEEP_ALIVE,
+                    default=self._config_entry.options.get(CONF_KEEP_ALIVE, DEFAULT_KEEP_ALIVE),
+                ): bool,
+            }
+        )
+
+        return self.async_show_form(step_id="keep_alive", data_schema=data_schema)
+
     async def async_step_manual_cookies(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle manual cookie input for CAPTCHA bypass."""
         errors: dict[str, str] = {}
@@ -172,17 +190,23 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
             else:
                 # Validate and save cookies
                 mprn = self._config_entry.data[CONF_MPRN]
-                session_manager = SessionManager(self.hass, mprn)
+                user_agent = user_input.get(CONF_MANUAL_USER_AGENT)
+                loaded = self._config_entry.state is config_entries.ConfigEntryState.LOADED
 
-                success = await session_manager.save_manual_cookies(
-                    cookie_string, user_agent=user_input.get(CONF_MANUAL_USER_AGENT)
-                )
+                if loaded:
+                    # Through the running API, so a poll or keep-alive using the old session
+                    # cannot overwrite the paste or vouch for it
+                    coordinator = self._config_entry.runtime_data.coordinator
+                    success = await coordinator.esb_api.save_manual_cookies(cookie_string, user_agent=user_agent)
+                else:
+                    success = await SessionManager(self.hass, mprn).save_manual_cookies(
+                        cookie_string, user_agent=user_agent
+                    )
 
                 if success:
                     _LOGGER.info("Manual cookies saved successfully for MPRN %s", mprn)
-                    if self._config_entry.state is config_entries.ConfigEntryState.LOADED:
+                    if loaded:
                         # Use the new cookies now rather than after the CAPTCHA back-off interval
-                        coordinator = self._config_entry.runtime_data.coordinator
                         self.hass.async_create_task(coordinator.async_manual_session_saved())
                     return self.async_create_entry(title="", data=dict(self._config_entry.options))
 

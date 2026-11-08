@@ -45,6 +45,7 @@ from custom_components.esb_smart_meter.sensor import (
     ExportTotalSensor,
     ExportCreditSensor,
     UsageCostSensor,
+    SessionConfirmedSensor,
     async_setup_entry,
 )
 from tests.conftest import _async_create_task_handler
@@ -125,15 +126,15 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
-        """Test that setup_entry creates all 30 sensors (period, export, totals, diagnostic, band breakdown)."""
+        """Test that setup_entry creates all 31 sensors (period, export, totals, diagnostic, band breakdown)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
-        # 12 period + 2 kWh totals + 2 euro totals + 4 diagnostic + 4 band kWh + 4 band euro + 2 standing charge
+        # 12 period + 2 kWh totals + 2 euro totals + 5 diagnostic + 4 band kWh + 4 band euro + 2 standing charge
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 30
+        assert len(sensors) == 31
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -158,6 +159,7 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[17], ApiStatusSensor)
         assert isinstance(sensors[18], DataAgeSensor)
         assert isinstance(sensors[19], CircuitBreakerStatusSensor)
+        assert isinstance(sensors[20], SessionConfirmedSensor)
 
     @pytest.mark.asyncio
     async def test_unique_ids_are_unchanged(self, mock_hass, mock_config_entry):
@@ -171,7 +173,7 @@ class TestAsyncSetupEntry:
             "export_today", "export_last_24_hours", "export_this_week", "export_last_7_days",
             "export_this_month", "export_last_30_days",
             "usage_total", "export_total", "usage_cost_total", "export_credit_total",
-            "last_update", "api_status", "data_age", "circuit_breaker_status",
+            "last_update", "api_status", "data_age", "circuit_breaker_status", "session_confirmed",
             "usage_day_total", "usage_night_total", "usage_peak_total", "usage_boost_total",
             "usage_cost_day_total", "usage_cost_night_total", "usage_cost_peak_total", "usage_cost_boost_total",
             "standing_charge_total", "standing_charge_energy_total",
@@ -198,7 +200,9 @@ class TestAsyncSetupEntry:
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
         sensors = async_add_entities.call_args[0][0]
-        diagnostic = (LastUpdateSensor, ApiStatusSensor, DataAgeSensor, CircuitBreakerStatusSensor)
+        diagnostic = (
+            LastUpdateSensor, ApiStatusSensor, DataAgeSensor, CircuitBreakerStatusSensor, SessionConfirmedSensor,
+        )
         for sensor in sensors:
             expected = EntityCategory.DIAGNOSTIC if isinstance(sensor, diagnostic) else None
             assert sensor.entity_category == expected, type(sensor).__name__
