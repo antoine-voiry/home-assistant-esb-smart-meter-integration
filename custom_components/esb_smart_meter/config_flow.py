@@ -11,12 +11,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
+    CONF_KEEP_ALIVE,
     CONF_MANUAL_COOKIES,
     CONF_MANUAL_USER_AGENT,
     CONF_MPRN,
     CONF_PASSWORD,
     CONF_UPDATE_INTERVAL,
     CONF_USERNAME,
+    DEFAULT_KEEP_ALIVE,
     DOMAIN,
     MPRN_LENGTH,
     SUBENTRY_TARIFF,
@@ -133,7 +135,7 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
         """Manage the options."""
         return self.async_show_menu(
             step_id="init",
-            menu_options=["update_interval", "manual_cookies"],
+            menu_options=["update_interval", "manual_cookies", "keep_alive"],
             description_placeholders={
                 "current_interval": self._config_entry.options.get(CONF_UPDATE_INTERVAL, 24),
             },
@@ -159,6 +161,22 @@ class ESBSmartMeterOptionsFlow(config_entries.OptionsFlow):
             step_id="update_interval",
             data_schema=data_schema,
         )
+
+    async def async_step_keep_alive(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Turn the session keep-alive on or off (off by default)."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data={**self._config_entry.options, **user_input})
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_KEEP_ALIVE,
+                    default=self._config_entry.options.get(CONF_KEEP_ALIVE, DEFAULT_KEEP_ALIVE),
+                ): bool,
+            }
+        )
+
+        return self.async_show_form(step_id="keep_alive", data_schema=data_schema)
 
     async def async_step_manual_cookies(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle manual cookie input for CAPTCHA bypass."""

@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api_client import ESBDataApi, InvalidAuthException
@@ -32,6 +33,11 @@ class ESBRuntimeData:
     session: aiohttp.ClientSession
     # entry.data and entry.options at setup; None makes any update reload
     settings: tuple[dict[str, Any], dict[str, Any]] | None = None
+
+
+def session_signal(entry_id: str) -> str:
+    """Dispatcher signal sent after each session keep-alive."""
+    return f"{DOMAIN}_session_{entry_id}"
 
 
 # A plain alias rather than a `type` statement: CodeQL's Python extractor misreads PEP 695 aliases
@@ -83,6 +89,19 @@ class ESBDataUpdateCoordinator(DataUpdateCoordinator[ESBData]):
         self.last_successful_update_time: datetime | None = None
         # (downloaded data, tariff fingerprint, split) shared by the band sensors of one update
         self.band_split: tuple[ESBData, str, "BandSplit"] | None = None
+        # Result of the last session keep-alive (a SESSION_* state); None until one has run
+        self.keep_alive_state: str | None = None
+
+    async def async_keep_alive(self) -> None:
+        """Keep ESB's session alive between polls.
+
+        Deliberately no refresh here, even when the session has expired: a failed keep-alive
+        only marks the session, and the next scheduled poll decides whether to log in.
+        """
+        state = await self.esb_api.keep_alive()
+        if state is not None:
+            self.keep_alive_state = state
+        async_dispatcher_send(self.hass, session_signal(self.config_entry.entry_id))
 
     async def _async_update_data(self) -> ESBData:
         """

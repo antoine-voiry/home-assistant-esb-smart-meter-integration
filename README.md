@@ -175,7 +175,7 @@ After successful setup, you'll have **sixteen energy sensors** created under a s
 
 Sensor names are shown under the device name, e.g. **ESB Smart Meter (XXXXXXXXXXX) Usage today**.
 
-Four more sensors appear in the device's **Diagnostic** section:
+Five more sensors appear in the device's **Diagnostic** section:
 
 | Sensor Entity ID | Description |
 |-----------------|-------------|
@@ -183,6 +183,7 @@ Four more sensors appear in the device's **Diagnostic** section:
 | `sensor.esb_smart_meter_api_status` | `online`, `error` or `unknown` |
 | `sensor.esb_smart_meter_data_age` | Hours since the last successful download |
 | `sensor.esb_smart_meter_circuit_breaker_status` | `closed`, `open` or `half_open` (login back-off after repeated failures) |
+| `sensor.esb_smart_meter_session_confirmed` | When ESB last accepted the saved session, at an update or a keep-alive; unknown when there is no session |
 
 ### Device Information
 
@@ -242,6 +243,14 @@ ESB Networks has implemented CAPTCHA protection on their login system. This inte
 - This could be temporary rate limiting or permanent security change
 - Currently **no automated solution** exists for CAPTCHA bypass
 - Workaround: log in with your browser and paste the session into the integration, see [CAPTCHA-SETUP.md](CAPTCHA-SETUP.md)
+
+**Keeping a session alive (optional):** ESB signs a session out after 20 minutes without use, so
+with daily updates every update starts with a fresh login. Under **Configure → Keep the ESB session
+alive** the integration makes the same small request an open ESB tab makes, every 9 minutes, so one
+session (a pasted one, for example) stays in use instead of lapsing between updates. It is off by
+default because it contacts ESB about 160 times a day. If ESB ends the session anyway, nothing
+happens until the next update, which logs in as usual. With it on, the age of
+`sensor.esb_smart_meter_session_confirmed` tells an automation whether the session is still alive.
 
 ### Data Availability
 

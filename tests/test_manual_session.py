@@ -510,7 +510,8 @@ class TestRenewedCookiesAreSaved:
     async def test_changed_jar_is_saved(self, esb_api):
         save = await self._fetch(esb_api, {"c": "old"}, {"c": "new"})
         save.assert_awaited_once_with(
-            cookies={"c": "new"}, user_agent=BROWSER_UA, download_token="tok", source=SESSION_SOURCE_MANUAL
+            cookies={"c": "new"}, user_agent=BROWSER_UA, download_token="tok", source=SESSION_SOURCE_MANUAL,
+            confirmed=True,
         )
 
     @pytest.mark.asyncio
