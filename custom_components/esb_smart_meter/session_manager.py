@@ -318,12 +318,13 @@ class SessionManager:
             self._update_session_file, {"expired_at": dt_util.utcnow().isoformat()}
         )
 
-    async def keep_alive(self, http_session: aiohttp.ClientSession) -> str:
+    async def keep_alive(self, http_session: aiohttp.ClientSession) -> str | None:
         """Use the saved session the way an open portal tab does (GET /ac/e), so it does not expire.
 
         ESB's session lasts 20 minutes without use and is re-issued on use; cookies it re-issues
         are saved. This never logs in: a session ESB no longer accepts is only marked expired,
-        and the next poll decides what to do. Returns one of the SESSION_* states.
+        and the next poll decides what to do. Returns one of the SESSION_* states, or None when
+        a new session was saved (pasted) while the request was out.
         """
         session_data = await self._hass.async_add_executor_job(self._read_session_file)
         if not session_data or not self._is_session_valid(session_data) or session_data.get("rejected_at"):
@@ -353,7 +354,16 @@ class SessionManager:
             _LOGGER.warning("ESB session keep-alive failed: %s", err)
             return SESSION_ERROR
 
-        if status == 200:
+        if status < 200 or status == 429 or status >= 500:
+            _LOGGER.warning("ESB session keep-alive answered HTTP %d", status)
+            return SESSION_ERROR
+        # The paste flow saves through its own SessionManager, outside the API's lock: never
+        # overwrite or mark a session saved while the request was out with this one's result
+        current = await self._hass.async_add_executor_job(self._read_session_file)
+        if not current or current.get("cookies") != session_data["cookies"]:
+            _LOGGER.debug("Session replaced during the keep-alive; leaving the new one alone")
+            return None
+        if 200 <= status < 300:
             cookies = self.extract_cookies_from_jar(http_session.cookie_jar)
             if cookies != session_data["cookies"]:
                 await self.save_session(

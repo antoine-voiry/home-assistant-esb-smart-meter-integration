@@ -169,7 +169,7 @@ class TestKeepAliveRequest:
         assert len(portal.requests) == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status", [429, 500, 503])
+    @pytest.mark.parametrize("status", [404, 429, 500, 503])
     async def test_outage_answer_says_nothing_about_the_session(self, tmp_path, status):
         sm = SessionManager(_hass(tmp_path), MPRN)
         before = await _session(sm, confirmed=True)
@@ -201,6 +201,35 @@ class TestKeepAliveRequest:
         portal = _Portal()
         assert await sm.keep_alive(portal) == SESSION_NONE
         assert portal.requests == []
+
+
+class TestKeepAliveAnswers:
+    @pytest.mark.asyncio
+    async def test_any_success_answer_is_alive(self, tmp_path):
+        sm = SessionManager(_hass(tmp_path), MPRN)
+        await _session(sm, confirmed=True)
+        assert await sm.keep_alive(_Portal(status=204)) == SESSION_ALIVE
+        assert _read(sm)["expired_at"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [200, 302])
+    async def test_a_session_pasted_during_the_request_is_left_alone(self, tmp_path, status):
+        sm = SessionManager(_hass(tmp_path), MPRN)
+        await _session(sm, {".AspNetCore.Cookies": "old"}, confirmed=True)
+        pasted = SessionManager(_hass(tmp_path), MPRN)  # the paste flow's own manager
+        portal = _Portal(status=status, reissue={".AspNetCore.Cookies": "reissued"})
+        get = portal.get
+
+        def paste_then_answer(*args, **kwargs):
+            pasted._write_session_file({**_read(sm), "cookies": {".AspNetCore.Cookies": "pasted"}, "last_ok": None})
+            return get(*args, **kwargs)
+
+        portal.get = paste_then_answer
+        assert await sm.keep_alive(portal) is None  # nothing known about the new session
+
+        stored = _read(sm)
+        assert stored["cookies"] == {".AspNetCore.Cookies": "pasted"}
+        assert stored.get("expired_at") is None and stored["last_ok"] is None
 
 
 class TestKeepAliveNeverLogsIn:

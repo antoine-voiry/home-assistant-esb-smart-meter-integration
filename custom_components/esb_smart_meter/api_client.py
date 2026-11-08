@@ -627,7 +627,7 @@ class ESBDataApi:
         """Keep the saved ESB session from expiring between polls. Never logs in.
 
         Returns one of the SESSION_* states, or None when a poll is using the session right now
-        (it confirms or replaces the session itself).
+        (it confirms or replaces the session itself) or a new session was pasted meanwhile.
         """
         if self._session_lock.locked():
             return None
