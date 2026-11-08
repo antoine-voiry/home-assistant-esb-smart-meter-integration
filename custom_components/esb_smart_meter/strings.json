@@ -72,6 +72,10 @@
     }
   },
   "issues": {
+    "no_tariff": {
+      "title": "ESB costs need a tariff period",
+      "description": "Meter {mprn} has no tariff period, so its cost statistics (usage cost, export credit, the cost by tariff band and the standing charge) stay empty. To track costs, open Settings → Devices & services → ESB Smart Meter and select **Add tariff period**. This notice clears itself once a period is added; if you don't need costs, ignore it."
+    },
     "captcha_required": {
       "title": "ESB Networks requires CAPTCHA verification",
       "description": "ESB Networks is asking for a CAPTCHA for meter {mprn}. Log in at {esb_url} in your browser, then open Settings → Devices & services → ESB Smart Meter → Configure → Provide Session Cookies and paste your cookies. Updates resume automatically once the cookies work."

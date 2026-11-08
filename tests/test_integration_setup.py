@@ -6,9 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import homeassistant.util.dt as dt_util
 import pytest
 from homeassistant.components.recorder.statistics import statistics_during_period
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState, ConfigSubentryData
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState, ConfigSubentry, ConfigSubentryData
 from homeassistant.const import EntityCategory
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
@@ -443,3 +444,20 @@ async def test_band_breakdown_is_recosted_after_tariff_change(recorder_mock, has
         assert sum(bands) == pytest.approx((await _sums(hass, USAGE_ID))[-1])
         fetch.assert_awaited_once()  # no re-download
 
+
+
+@pytest.mark.asyncio
+async def test_no_tariff_issue_until_a_tariff_period_is_added(recorder_mock, hass, enable_custom_integrations, entry, session):
+    fetch = AsyncMock(return_value=_ten_days_of_usage())
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        issues = ir.async_get(hass)
+        assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is not None
+
+        hass.config_entries.async_add_subentry(
+            entry, ConfigSubentry(data=TARIFF, subentry_type="tariff", title="t", unique_id="2020-01-01")
+        )
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert issues.async_get_issue(DOMAIN, f"no_tariff_{entry.entry_id}") is None
+        fetch.assert_awaited_once()  # adding a tariff re-costs from memory, no reload

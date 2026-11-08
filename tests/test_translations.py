@@ -66,3 +66,9 @@ def test_energy_dashboard_issue_is_translated():
 def test_reconfigure_step_explains_the_fields_like_the_rates_step():
     tariff = _load("strings.json")["config_subentries"]["tariff"]
     assert tariff["step"]["reconfigure"]["data_description"] == tariff["step"]["rates"]["data_description"]
+
+
+def test_no_tariff_repair_issue_is_translated():
+    issue = _load("translations/en.json")["issues"]["no_tariff"]
+    assert issue["title"].strip()
+    assert "{mprn}" in issue["description"]

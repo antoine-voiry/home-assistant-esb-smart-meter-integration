@@ -416,7 +416,8 @@ template:
 ### Cost Tracking
 
 Add one **tariff period** per price change: **Settings** → **Devices & Services** →
-**ESB Smart Meter** → **Add tariff period**.
+**ESB Smart Meter** → **Add tariff period**. Until you add one, the cost statistics stay
+empty and **Settings** → **Repairs** shows a notice saying so; ignore it if you don't need costs.
 
 1. Pick **SSE Airtricity smart**, **Bord Gáis Energy smart** or **Custom**. Presets
    fill in example rates from October 2026 and the usual bands (night 23:00–08:00,

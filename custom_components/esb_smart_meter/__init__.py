@@ -12,6 +12,7 @@ from .const import CONF_MPRN, CONF_PASSWORD, CONF_UPDATE_INTERVAL, CONF_USERNAME
 from .coordinator import ESBConfigEntry, ESBDataUpdateCoordinator, ESBRuntimeData
 from .energy_check import async_remove_energy_issue, async_setup_energy_check
 from .import_state import COST_SERIES, ImportState
+from .tariff_check import async_check_tariff, async_remove_tariff_issue
 from .utils import create_esb_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,6 +71,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> bool:
     # Warn (Repairs) if the Energy dashboard uses ESB entities instead of the ESB statistics
     await async_setup_energy_check(hass)
 
+    # Warn (Repairs) while there is no tariff period, so the cost statistics stay empty
+    async_check_tariff(hass, entry)
+
     return True
 
 
@@ -87,6 +91,7 @@ async def _async_reload_on_update(hass: HomeAssistant, entry: ESBConfigEntry) ->
     """
     runtime = entry.runtime_data
     if runtime.settings == _settings_snapshot(entry):
+        async_check_tariff(hass, entry)
         runtime.coordinator.async_update_listeners()
         return
     await hass.config_entries.async_reload(entry.entry_id)
@@ -113,3 +118,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: ESBConfigEntry) -> None
     for series in COST_SERIES:
         await ImportState(hass, entry.entry_id, series).async_remove()
     async_remove_energy_issue(hass, entry.entry_id)
+    async_remove_tariff_issue(hass, entry.entry_id)
