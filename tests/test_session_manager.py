@@ -489,6 +489,18 @@ class TestLegacyMove:
         assert sm._session_file.exists()
         assert legacy.parent.exists()
 
+    def test_already_empty_legacy_directory_is_removed(self, tmp_path):
+        sm = self._sm(tmp_path)
+        legacy = sm._legacy_file
+        legacy.parent.mkdir()
+        sm._move_legacy_session(legacy)
+        assert not legacy.parent.exists()
+
+    def test_missing_legacy_directory_is_ignored(self, tmp_path, caplog):
+        sm = self._sm(tmp_path)
+        sm._move_legacy_session(sm._legacy_file)
+        assert "Could not move legacy session cache" not in caplog.text
+
 
 class TestCheckSession:
     @staticmethod
