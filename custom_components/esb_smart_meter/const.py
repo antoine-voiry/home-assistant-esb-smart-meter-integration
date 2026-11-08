@@ -47,6 +47,17 @@ SESSION_SOURCE_LOGIN = "login"  # Session produced by the integration's own logi
 SESSION_SOURCE_MANUAL = "manual"  # Session pasted by the user from their browser
 CONF_SESSION_COOKIES = "session_cookies"  # Config key for stored session cookies
 
+# Session keep-alive (opt-in: it contacts ESB every few minutes instead of once per poll)
+CONF_KEEP_ALIVE = "keep_alive"
+DEFAULT_KEEP_ALIVE = False
+KEEPALIVE_INTERVAL = timedelta(minutes=9)  # ESB's session lasts 20 minutes unused; the portal pings every 9
+KEEPALIVE_FIRST_DELAY = 30  # seconds after setup, so the session state is known early
+# Results of a keep-alive, shown on the session sensor
+SESSION_ALIVE = "alive"  # ESB accepted the session
+SESSION_EXPIRED = "expired"  # ESB sent us to log in; the next poll decides what to do
+SESSION_NONE = "none"  # no saved session (or a rejected paste)
+SESSION_ERROR = "error"  # network error, 429 or 5xx: says nothing about the session
+
 # Tariff periods (config subentries); values match TariffPeriod field names
 SUBENTRY_TARIFF = "tariff"
 CONF_PRESET = "preset"
@@ -86,6 +97,8 @@ ESB_MYACCOUNT_URL = "https://myaccount.esbnetworks.ie"
 # Moved by ESB by 2026-11-01 (the old /Api/HistoricConsumption and /DataHub/... answer 404 when logged in)
 ESB_CONSUMPTION_URL = "https://myaccount.esbnetworks.ie/energymanagement/historic-consumption"
 ESB_TOKEN_URL = "https://myaccount.esbnetworks.ie/af/t"
+# What an open portal tab calls to keep its session alive; ESB re-issues the session cookie on use
+ESB_KEEPALIVE_URL = "https://myaccount.esbnetworks.ie/ac/e"
 ESB_DOWNLOAD_URL = "https://myaccount.esbnetworks.ie/energymanagement/api/consumption/DownloadHdfPeriodic"
 
 # CSV columns expected from ESB

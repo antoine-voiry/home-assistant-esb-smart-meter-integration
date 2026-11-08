@@ -17,13 +17,19 @@ def test_en_json_matches_strings_json():
 
 def test_options_menu_entries_have_labels():
     menu = _load("translations/en.json")["options"]["step"]["init"]["menu_options"]
-    assert set(menu) == {"update_interval", "manual_cookies"}
+    assert set(menu) == {"update_interval", "manual_cookies", "keep_alive"}
     assert all(label.strip() for label in menu.values())
 
 
 def test_update_interval_step_is_translated():
     step = _load("translations/en.json")["options"]["step"]["update_interval"]
     assert step["data"]["update_interval"].strip()
+
+
+def test_keep_alive_step_is_translated():
+    step = _load("translations/en.json")["options"]["step"]["keep_alive"]
+    assert step["title"].strip() and step["description"].strip()
+    assert step["data"]["keep_alive"].strip() and step["data_description"]["keep_alive"].strip()
 
 
 def test_captcha_repair_issue_is_translated():

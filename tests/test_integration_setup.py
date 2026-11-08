@@ -10,11 +10,19 @@ from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState, Config
 from homeassistant.const import EntityCategory
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.esb_smart_meter.api_client import InvalidAuthException
-from custom_components.esb_smart_meter.const import CONF_MPRN, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from custom_components.esb_smart_meter.const import (
+    CONF_KEEP_ALIVE,
+    CONF_MPRN,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DOMAIN,
+    KEEPALIVE_FIRST_DELAY,
+    KEEPALIVE_INTERVAL,
+)
 from custom_components.esb_smart_meter.models import DUBLIN_TZ, ESBData
 from custom_components.esb_smart_meter.tariff_flow import PRESETS
 
@@ -70,7 +78,7 @@ async def test_setup_names_entities_and_unloads(recorder_mock, hass, enable_cust
 
     registry = er.async_get(hass)
     entities = {e.unique_id: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
-    assert len(entities) == 30
+    assert len(entities) == 31
 
     today = entities[f"{MPRN}_today"]
     # New installs get the same documented entity ids existing installs already have
@@ -83,10 +91,69 @@ async def test_setup_names_entities_and_unloads(recorder_mock, hass, enable_cust
     assert hass.states.get(last_24h.entity_id).state == "0.5"
     assert today.entity_category is None
     assert entities[f"{MPRN}_api_status"].entity_category is EntityCategory.DIAGNOSTIC
+    session_sensor = entities[f"{MPRN}_session_confirmed"]
+    assert session_sensor.entity_id == "sensor.esb_smart_meter_session_confirmed"
+    assert session_sensor.entity_category is EntityCategory.DIAGNOSTIC
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert entry.state is ConfigEntryState.NOT_LOADED
     session.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [{}, {CONF_KEEP_ALIVE: False}])
+async def test_keep_alive_is_off_unless_chosen(recorder_mock, hass, enable_custom_integrations, session, options):
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=MPRN, options=options,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+    )
+    entry.add_to_hass(hass)
+    keep_alive = AsyncMock(return_value="alive")
+    with patch("custom_components.esb_smart_meter.ESBDataApi.keep_alive", keep_alive):
+        await _setup(hass, entry, AsyncMock(return_value=_esb_data()))
+        async_fire_time_changed(hass, dt_util.utcnow() + KEEPALIVE_INTERVAL * 3)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    keep_alive.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_runs_when_chosen_and_updates_the_session_sensor(
+    recorder_mock, hass, enable_custom_integrations, session
+):
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=MPRN, options={CONF_KEEP_ALIVE: True},
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+    )
+    entry.add_to_hass(hass)
+    keep_alive = AsyncMock(side_effect=["alive", "expired"])
+    fetch = AsyncMock(return_value=_esb_data())
+    # fetch stays patched throughout, so a poll the keep-alive started would be counted
+    with (
+        patch("custom_components.esb_smart_meter.ESBDataApi.keep_alive", keep_alive),
+        patch("custom_components.esb_smart_meter.ESBDataApi.fetch", fetch),
+    ):
+        await _setup(hass, entry, fetch)
+        assert hass.states.get("sensor.esb_smart_meter_session_confirmed").attributes["keep_alive"] is None
+
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=KEEPALIVE_FIRST_DELAY + 1))
+        await hass.async_block_till_done()
+        assert keep_alive.await_count == 1
+        assert hass.states.get("sensor.esb_smart_meter_session_confirmed").attributes["keep_alive"] == "alive"
+
+        async_fire_time_changed(hass, dt_util.utcnow() + KEEPALIVE_INTERVAL + timedelta(seconds=1))
+        await hass.async_block_till_done()
+        assert keep_alive.await_count == 2
+        assert hass.states.get("sensor.esb_smart_meter_session_confirmed").attributes["keep_alive"] == "expired"
+        await hass.async_block_till_done(wait_background_tasks=True)
+    # the expired session started no poll of its own: only setup's first refresh fetched
+    assert fetch.await_count == 1
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    keep_alive.reset_mock(side_effect=True)
+    async_fire_time_changed(hass, dt_util.utcnow() + KEEPALIVE_INTERVAL * 3)
+    await hass.async_block_till_done()
+    keep_alive.assert_not_awaited()  # unloading stops it
 
 
 @pytest.mark.asyncio

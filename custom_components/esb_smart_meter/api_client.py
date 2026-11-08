@@ -65,6 +65,8 @@ class ESBDataApi:
         self._circuit_breaker = CircuitBreaker(hass=hass, mprn=mprn)
         self._session_manager = SessionManager(hass, mprn)
         self._current_user_agent = None
+        # A poll and a keep-alive share the cookie jar: never both at once
+        self._session_lock = asyncio.Lock()
 
     async def __login(self) -> dict[str, Any]:
         """Login to ESB and return cookies (following the complete 8-step flow)."""
@@ -327,6 +329,7 @@ class ESBDataApi:
                 user_agent=user_agent,
                 download_token=None,
                 source=SESSION_SOURCE_LOGIN,
+                confirmed=True,
             )
 
             # REQUESTS 5-7: account page, consumption page, download token
@@ -342,6 +345,7 @@ class ESBDataApi:
                 cookies=cookies,
                 user_agent=user_agent,
                 download_token=download_token,
+                confirmed=True,
             )
             _LOGGER.info("Session saved for future reuse")
 
@@ -380,7 +384,7 @@ class ESBDataApi:
         # Network errors and ESB outages propagate: they say nothing about the cookies
         if not await self._session_manager.check_session(self._session, user_agent):
             self._session.cookie_jar.clear()
-            if source == SESSION_SOURCE_MANUAL:
+            if source == SESSION_SOURCE_MANUAL and not cached.get("last_ok"):
                 # Keep the rejected paste as a marker: a restart must not log in by script
                 # straight away, and every scripted attempt can prolong ESB's restriction.
                 await self._session_manager.mark_rejected(cached)
@@ -391,10 +395,19 @@ class ESBDataApi:
                 )
                 raise CaptchaRequiredException(_PASTE_REJECTED)
             await self._session_manager.clear_session()
-            _LOGGER.warning("Cached session validation failed, performing fresh login")
+            if cached.get("last_ok"):
+                # ESB accepted this session before, so it has expired rather than been refused:
+                # one fresh login (it may meet a CAPTCHA, which is handled as usual)
+                _LOGGER.warning(
+                    "Cached session expired (ESB last accepted it at %s), performing fresh login",
+                    cached["last_ok"],
+                )
+            else:
+                _LOGGER.warning("Cached session validation failed, performing fresh login")
             return None
 
         _LOGGER.info("Cached session validated successfully")
+        await self._session_manager.mark_confirmed()
         self._current_user_agent = user_agent
         download_token = cached.get("download_token")
         token_from_cache = bool(download_token)
@@ -426,6 +439,7 @@ class ESBDataApi:
             user_agent=user_agent,
             download_token=download_token,
             source=source,
+            confirmed=True,
         )
         return download_token
 
@@ -609,8 +623,29 @@ class ESBDataApi:
             _LOGGER.error("CSV data preview: %s", csv_preview)
             raise
 
+    async def keep_alive(self) -> str | None:
+        """Keep the saved ESB session from expiring between polls. Never logs in.
+
+        Returns one of the SESSION_* states, or None when a poll is using the session right now
+        (it confirms or replaces the session itself).
+        """
+        if self._session_lock.locked():
+            return None
+        async with self._session_lock:
+            return await self._session_manager.keep_alive(self._session)
+
+    @property
+    def session_status(self) -> dict[str, Any]:
+        """Bookkeeping fields of the saved session (never its cookies)."""
+        return self._session_manager.status
+
     async def fetch(self) -> ESBData:
         """Fetch data with circuit breaker, retry logic, and conditional download."""
+        async with self._session_lock:
+            return await self.__fetch()
+
+    async def __fetch(self) -> ESBData:
+        """Fetch, holding the session lock."""
         # Check circuit breaker before attempting
         if not self._circuit_breaker.can_attempt():
             raise RuntimeError("Circuit breaker is open. Too many recent failures.")
@@ -653,6 +688,7 @@ class ESBDataApi:
                     user_agent=user_agent,
                     download_token=download_token,
                     source=auth_result["source"],
+                    confirmed=True,
                 )
 
             # Success! Record in circuit breaker
