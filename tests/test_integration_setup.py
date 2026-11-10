@@ -78,7 +78,7 @@ async def test_setup_names_entities_and_unloads(recorder_mock, hass, enable_cust
 
     registry = er.async_get(hass)
     entities = {e.unique_id: e for e in er.async_entries_for_config_entry(registry, entry.entry_id)}
-    assert len(entities) == 31
+    assert len(entities) == 32
 
     today = entities[f"{MPRN}_today"]
     # New installs get the same documented entity ids existing installs already have
@@ -94,6 +94,9 @@ async def test_setup_names_entities_and_unloads(recorder_mock, hass, enable_cust
     session_sensor = entities[f"{MPRN}_session_confirmed"]
     assert session_sensor.entity_id == "sensor.esb_smart_meter_session_confirmed"
     assert session_sensor.entity_category is EntityCategory.DIAGNOSTIC
+    band = hass.states.get(entities[f"{MPRN}_tariff_band"].entity_id)
+    assert band.entity_id == "sensor.esb_electricity_tariff_band"
+    assert (band.state, band.attributes["rate"]) == ("unknown", None)  # no tariff period yet
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert entry.state is ConfigEntryState.NOT_LOADED
@@ -512,6 +515,38 @@ async def test_band_breakdown_is_recosted_after_tariff_change(recorder_mock, has
         assert sum(bands) == pytest.approx((await _sums(hass, USAGE_ID))[-1])
         fetch.assert_awaited_once()  # no re-download
 
+
+@pytest.mark.asyncio
+async def test_tariff_band_follows_the_clock_and_tariff_edits(
+    recorder_mock, hass, enable_custom_integrations, session, freezer
+):
+    freezer.move_to("2026-10-21 15:30:00+00:00")  # 16:30 IST
+    tariff = {**TARIFF, "night_rate": 0.20, "peak_rate": 0.40}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MPRN,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+        subentries_data=[ConfigSubentryData(data=tariff, subentry_type="tariff", title="t", unique_id="2020-01-01")],
+    )
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, AsyncMock(return_value=_esb_data()))
+
+    band = hass.states.get("sensor.esb_electricity_tariff_band")
+    assert (band.state, band.attributes["rate"]) == ("day", 0.30)
+    assert band.attributes["options"] == ["day", "night", "peak", "boost"]
+
+    freezer.move_to("2026-10-21 16:00:00+00:00")  # 17:00 IST
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.esb_electricity_tariff_band").state == "peak"
+
+    subentry = next(iter(entry.subentries.values()))
+    hass.config_entries.async_update_subentry(entry, subentry, data={**tariff, "boost_rate": 0.10, "boost_start": 16, "boost_end": 18})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    band = hass.states.get("sensor.esb_electricity_tariff_band")
+    assert (band.state, band.attributes["rate"]) == ("boost", 0.10)
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.asyncio

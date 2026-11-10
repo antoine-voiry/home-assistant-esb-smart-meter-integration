@@ -9,6 +9,7 @@ from custom_components.esb_smart_meter.models import DUBLIN_TZ
 from custom_components.esb_smart_meter.tariff import (
     BANDS,
     TariffPeriod,
+    band_and_rate_at,
     split_by_band,
     export_credits,
     fingerprint,
@@ -250,3 +251,47 @@ def test_boost_window_may_overlap_peak_and_wins():
     assert validate_period(_form(boost_rate=0.09, boost_start=16, boost_end=18), set()) == {}
     assert period.band_at(_local(2026, 10, 21, 17)) == "boost"
     assert period.band_at(_local(2026, 10, 21, 18)) == "peak"
+
+
+@pytest.mark.parametrize(
+    "moment, expected",
+    [
+        # 21 Oct 2026 is in Irish summer time (UTC+1)
+        (datetime(2026, 10, 21, 22, tzinfo=UTC), ("night", 0.20)),
+        (datetime(2026, 10, 21, 7, tzinfo=UTC), ("day", 0.30)),
+        (datetime(2026, 10, 21, 16, tzinfo=UTC), ("peak", 0.40)),
+        (datetime(2026, 10, 21, 18, tzinfo=UTC), ("day", 0.30)),
+        # 10 Nov 2026 is in winter time (UTC+0)
+        (datetime(2026, 11, 10, 7, tzinfo=UTC), ("night", 0.20)),
+        (datetime(2026, 11, 10, 17, tzinfo=UTC), ("peak", 0.40)),
+    ],
+)
+def test_band_and_rate_at_reads_the_hour_in_irish_time(moment, expected):
+    assert band_and_rate_at([_period()], moment) == expected
+
+
+def test_band_and_rate_at_is_none_before_the_first_period():
+    later = _period(effective_from=date(2026, 10, 5))
+    assert band_and_rate_at([later], datetime(2026, 10, 4, 22, 30, tzinfo=UTC)) is None  # 23:30 IST on the 4th
+    assert band_and_rate_at([], datetime(2026, 10, 21, 12, tzinfo=UTC)) is None
+
+
+def test_band_and_rate_at_switches_period_at_irish_midnight():
+    periods = [_period(night_rate=0.20), _period(effective_from=date(2026, 10, 5), night_rate=0.15)]
+    assert band_and_rate_at(periods, datetime(2026, 10, 4, 22, 30, tzinfo=UTC)) == ("night", 0.20)  # 23:30 IST
+    assert band_and_rate_at(periods, datetime(2026, 10, 4, 23, 30, tzinfo=UTC)) == ("night", 0.15)  # 00:30 IST on the 5th
+
+
+def test_band_and_rate_at_weekday_only_peak_is_day_at_weekends():
+    saturday_peak_hour = datetime(2026, 10, 24, 16, tzinfo=UTC)  # 17:00 IST
+    assert band_and_rate_at([_period(peak_weekdays_only=True)], saturday_peak_hour) == ("day", 0.30)
+
+
+def test_band_and_rate_at_gives_the_boost_band_and_rate_only_with_a_boost_rate():
+    in_night = _period(boost_rate=0.09, boost_start=2, boost_end=5)
+    assert band_and_rate_at([in_night], datetime(2026, 10, 21, 2, tzinfo=UTC)) == ("boost", 0.09)  # 03:00 IST
+    wrapping = _period(boost_rate=0.09, boost_start=23, boost_end=2)
+    assert band_and_rate_at([wrapping], datetime(2026, 10, 21, 23, tzinfo=UTC)) == ("boost", 0.09)  # 00:00 IST
+    day_start = datetime(2026, 10, 20, 23, tzinfo=UTC)  # 00:00 IST on the 21st
+    bands = {band_and_rate_at([_period()], day_start + timedelta(hours=h))[0] for h in range(24)}
+    assert bands == {"day", "night", "peak"}

@@ -5,7 +5,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass
@@ -46,6 +46,7 @@ from custom_components.esb_smart_meter.sensor import (
     ExportCreditSensor,
     UsageCostSensor,
     SessionConfirmedSensor,
+    TariffBandSensor,
     async_setup_entry,
 )
 from tests.conftest import _async_create_task_handler
@@ -126,15 +127,16 @@ class TestAsyncSetupEntry:
 
     @pytest.mark.asyncio
     async def test_setup_entry_creates_all_sensors(self, mock_hass, mock_config_entry):
-        """Test that setup_entry creates all 31 sensors (period, export, totals, diagnostic, band breakdown)."""
+        """Test that setup_entry creates all 32 sensors (period, export, totals, diagnostic, band breakdown, band now)."""
         async_add_entities = MagicMock()
 
         await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
         # 12 period + 2 kWh totals + 2 euro totals + 5 diagnostic + 4 band kWh + 4 band euro + 2 standing charge
+        # + 1 tariff band
         assert async_add_entities.called
         sensors = async_add_entities.call_args[0][0]
-        assert len(sensors) == 31
+        assert len(sensors) == 32
 
         # Verify sensor types
         assert isinstance(sensors[0], TodaySensor)
@@ -160,6 +162,7 @@ class TestAsyncSetupEntry:
         assert isinstance(sensors[18], DataAgeSensor)
         assert isinstance(sensors[19], CircuitBreakerStatusSensor)
         assert isinstance(sensors[20], SessionConfirmedSensor)
+        assert isinstance(sensors[31], TariffBandSensor)
 
     @pytest.mark.asyncio
     async def test_unique_ids_are_unchanged(self, mock_hass, mock_config_entry):
@@ -177,6 +180,7 @@ class TestAsyncSetupEntry:
             "usage_day_total", "usage_night_total", "usage_peak_total", "usage_boost_total",
             "usage_cost_day_total", "usage_cost_night_total", "usage_cost_peak_total", "usage_cost_boost_total",
             "standing_charge_total", "standing_charge_energy_total",
+            "tariff_band",
         ]
 
     @pytest.mark.asyncio
@@ -1275,3 +1279,71 @@ class TestBandSplitCache:
         ):
             assert await energy._needs_full_import(hourly, stored) is False
             assert await charge._needs_full_import(hourly, stored) is True
+
+
+class TestTariffBandSensor:
+    """The band billed now, from the tariff periods and the clock."""
+
+    PERIOD = TariffPeriod(
+        effective_from=date(2026, 1, 1), day_rate=0.3, night_rate=0.2, peak_rate=0.4, standing_charge=0.72,
+        boost_rate=0.09,
+    )
+    # 21 Oct 2026 is in Irish summer time (UTC+1)
+    PEAK_HOUR = datetime(2026, 10, 21, 16, tzinfo=timezone.utc)  # 17:00 IST
+    BOOST_HOUR = datetime(2026, 10, 21, 2, tzinfo=timezone.utc)  # 03:00 IST
+
+    @staticmethod
+    def _sensor(*periods):
+        coordinator = MagicMock(spec=DataUpdateCoordinator)
+        sensor = TariffBandSensor(coordinator=coordinator, mprn="12345678901", entry=TestCostSensors._entry(*periods))
+        sensor.hass = MagicMock()
+        sensor.async_write_ha_state = Mock()
+        return sensor
+
+    def test_is_a_visible_enum_of_the_bands(self):
+        sensor = self._sensor()
+        assert sensor.unique_id == "12345678901_tariff_band"
+        assert sensor.entity_id == "sensor.esb_electricity_tariff_band"
+        assert sensor.device_class == SensorDeviceClass.ENUM
+        assert sensor.options == ["day", "night", "peak", "boost"]
+        assert sensor.entity_category is None
+        assert sensor.entity_registry_visible_default is True
+        assert sensor.should_poll is False
+
+    def test_hourly_tick_writes_the_band_and_rate(self):
+        sensor = self._sensor(self.PERIOD)
+        sensor._handle_update(self.PEAK_HOUR)
+        assert (sensor.native_value, sensor.extra_state_attributes) == ("peak", {"rate": 0.4})
+        sensor._handle_update(self.BOOST_HOUR)
+        assert (sensor.native_value, sensor.extra_state_attributes) == ("boost", {"rate": 0.09})
+        assert sensor.async_write_ha_state.call_count == 2
+
+    def test_unknown_without_a_tariff_period(self):
+        sensor = self._sensor()
+        sensor._handle_update(self.PEAK_HOUR)
+        assert (sensor.native_value, sensor.extra_state_attributes) == (None, {"rate": None})
+
+    def test_coordinator_update_reads_the_clock(self):
+        sensor = self._sensor(self.PERIOD)
+        with patch("custom_components.esb_smart_meter.sensor.datetime", wraps=datetime) as clock:
+            clock.now.return_value = self.BOOST_HOUR
+            sensor._handle_update()
+        assert sensor.native_value == "boost"
+        sensor.async_write_ha_state.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_follows_tariff_edits_and_every_hour(self):
+        sensor = self._sensor(self.PERIOD)
+        with patch(
+            "custom_components.esb_smart_meter.sensor.async_track_utc_time_change"
+        ) as track, patch(
+            "custom_components.esb_smart_meter.sensor.datetime", wraps=datetime
+        ) as clock, patch.object(sensor, "async_on_remove") as on_remove:
+            clock.now.return_value = self.PEAK_HOUR
+            await sensor.async_added_to_hass()
+        assert sensor.native_value == "peak"
+        sensor.coordinator.async_add_listener.assert_called_once_with(sensor._handle_update)
+        track.assert_called_once_with(sensor.hass, sensor._handle_update, minute=0, second=0)
+        assert on_remove.call_args_list == [
+            call(sensor.coordinator.async_add_listener.return_value), call(track.return_value),
+        ]

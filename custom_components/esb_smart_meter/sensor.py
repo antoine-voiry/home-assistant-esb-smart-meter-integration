@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_utc_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER, MODEL
@@ -27,6 +28,7 @@ from .statistics import (
 from .tariff import (
     BANDS,
     BandSplit,
+    band_and_rate_at,
     export_credits,
     fingerprint,
     split_by_band,
@@ -52,6 +54,7 @@ _LEGACY_OBJECT_IDS = {
     **{f"usage_cost_{band}_total": f"esb_electricity_usage_cost_{band}_total" for band in BANDS},
     "standing_charge_total": "esb_electricity_standing_charge_total",
     "standing_charge_energy_total": "esb_electricity_standing_charge_energy_total",
+    "tariff_band": "esb_electricity_tariff_band",
 }
 
 
@@ -109,6 +112,7 @@ async def async_setup_entry(
         *(BandCostSensor(coordinator=coordinator, mprn=mprn, entry=entry, band=band) for band in BANDS),
         StandingChargeSensor(coordinator=coordinator, mprn=mprn, entry=entry),
         StandingChargeEnergySensor(coordinator=coordinator, mprn=mprn, entry=entry),
+        TariffBandSensor(coordinator=coordinator, mprn=mprn, entry=entry),
     ]
 
     # Add entities - coordinator handles updates
@@ -1036,3 +1040,47 @@ class SessionConfirmedSensor(SensorEntity):
             "rejected_at": status.get("rejected_at"),
             "keep_alive": self.coordinator.keep_alive_state,
         }
+
+
+class TariffBandSensor(SensorEntity):
+    """The tariff band billed now (day, night, peak or EV / boost) and its €/kWh import rate.
+
+    Unknown before the first tariff period starts.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(BANDS)
+    _attr_icon = "mdi:timetable"
+    _attr_should_poll = False  # updated on the hour and when a tariff period changes
+
+    def __init__(self, *, coordinator: ESBDataUpdateCoordinator, mprn: str, entry: ESBConfigEntry) -> None:
+        """Initialize the sensor."""
+        super().__init__()
+        self.coordinator = coordinator
+        self._mprn = mprn
+        self._entry = entry
+        self._attr_translation_key = "tariff_band"
+        self.entity_id = _legacy_entity_id("tariff_band")
+        self._attr_device_info = _device_info(mprn)
+        self._attr_unique_id = f"{mprn}_tariff_band"
+
+    async def async_added_to_hass(self) -> None:
+        """Follow tariff period edits, which reach the coordinator's listeners, and every UTC hour.
+
+        Bands start on the hour in Irish time, which is a whole number of hours from UTC.
+        """
+        self._update_band(datetime.now(timezone.utc))
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_update))
+        self.async_on_remove(async_track_utc_time_change(self.hass, self._handle_update, minute=0, second=0))
+
+    @callback
+    def _handle_update(self, now: datetime | None = None) -> None:
+        """Write the band in force now."""
+        self._update_band(now or datetime.now(timezone.utc))
+        self.async_write_ha_state()
+
+    def _update_band(self, now: datetime) -> None:
+        current = band_and_rate_at(tariff_periods(self._entry), now)
+        self._attr_native_value = current[0] if current else None
+        self._attr_extra_state_attributes = {"rate": current[1] if current else None}

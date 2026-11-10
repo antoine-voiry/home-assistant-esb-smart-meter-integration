@@ -190,6 +190,20 @@
       },
       "standing_charge_energy_total": {
         "name": "Standing charge energy (always 0)"
+      },
+      "tariff_band": {
+        "name": "Tariff band",
+        "state": {
+          "day": "Day",
+          "night": "Night",
+          "peak": "Peak",
+          "boost": "EV / boost"
+        },
+        "state_attributes": {
+          "rate": {
+            "name": "Import rate (€/kWh)"
+          }
+        }
       }
     }
   },
