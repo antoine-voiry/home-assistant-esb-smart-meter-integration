@@ -38,7 +38,7 @@ A comprehensive Home Assistant integration for monitoring your electricity usage
 - **🔐 Secure Authentication**: Handles ESB's complete 8-step OAuth2-like authentication flow
 - **🔑 Re-authentication**: If ESB rejects your password, Home Assistant asks for the new one instead of failing silently
 - **🩺 Diagnostics Download**: One-click diagnostics file for bug reports, with credentials and MPRN redacted
-- **💶 Cost Tracking**: Dated tariff periods (day / night / peak, optional EV / boost window, standing charge, export rate) with SSE Airtricity and Bord Gáis presets; euro cost and export credit statistics for the Energy dashboard
+- **💶 Cost Tracking**: Dated tariff periods (day / night / peak, optional EV / boost window, standing charge, export rate) with SSE Airtricity and Bord Gáis presets; euro cost and export credit statistics for the Energy dashboard; a sensor for the tariff band billed now
 - **🗂️ Full History**: Imports everything ESB provides (about 2 years) on first run, then only recent days
 - **📱 Device Grouping**: All sensors grouped under a single device in Home Assistant UI
 - **🆔 Unique Entity IDs**: Proper entity management with MPRN-based unique identifiers
@@ -184,6 +184,12 @@ Five more sensors appear in the device's **Diagnostic** section:
 | `sensor.esb_smart_meter_data_age` | Hours since the last successful download |
 | `sensor.esb_smart_meter_circuit_breaker_status` | `closed`, `open` or `half_open` (login back-off after repeated failures) |
 | `sensor.esb_smart_meter_session_confirmed` | When ESB last accepted the saved session, at an update or a keep-alive; unknown when there is no session |
+
+One more sensor shows the tariff band billed right now (see [Current tariff band](#current-tariff-band)):
+
+| Sensor Entity ID | Description |
+|-----------------|-------------|
+| `sensor.esb_electricity_tariff_band` | `day`, `night`, `peak` or `boost`, with the band's €/kWh import rate in its `rate` attribute; unknown before your first tariff period |
 
 ### Device Information
 
@@ -493,6 +499,40 @@ ESB Energy:
 ```
 
 The bars are filled at half opacity, so these are deeper than the colours you will see.
+
+#### Current tariff band
+
+The **Tariff band** sensor (`sensor.esb_electricity_tariff_band`) shows the band billed right now:
+**Day**, **Night**, **Peak** or **EV / boost** (states `day`, `night`, `peak` and `boost`), with
+that band's €/kWh import rate in its `rate` attribute. It uses the same bands as the split above:
+the EV / boost window applies every day, ahead of the night and peak rates, and is never shown
+without an EV / boost rate. Night or peak hours priced at the day rate count as Day, and a
+weekday-only peak counts as Day at weekends. Before your first tariff period, the state is unknown.
+
+The state changes on the hour, and right away when you add, edit or remove a tariff period.
+
+Use it to run things in the cheap hours. During an EV / boost window the state is `boost`, not
+`night`, so check for both:
+
+```yaml
+# configuration.yaml
+template:
+  - binary_sensor:
+      - name: "Cheap electricity"
+        state: "{{ states('sensor.esb_electricity_tariff_band') in ['night', 'boost'] }}"
+```
+
+To show the current rate as a sensor of its own, for example on a dashboard card:
+
+```yaml
+# configuration.yaml
+template:
+  - sensor:
+      - name: "Electricity import rate"
+        unit_of_measurement: "€/kWh"
+        state: "{{ state_attr('sensor.esb_electricity_tariff_band', 'rate') }}"
+        availability: "{{ state_attr('sensor.esb_electricity_tariff_band', 'rate') is not none }}"
+```
 
 ### Energy Dashboard Integration
 

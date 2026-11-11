@@ -150,6 +150,16 @@ def _period_for(periods: list[TariffPeriod], day: date) -> TariffPeriod | None:
     return current
 
 
+def band_and_rate_at(periods: list[TariffPeriod], moment: datetime) -> tuple[str, float] | None:
+    """Return the band and €/kWh import rate in force at a moment, or None before the first period."""
+    local = moment.astimezone(DUBLIN_TZ)
+    period = _period_for(periods, local.date())
+    if period is None:
+        return None
+    band = period.band_at(local)
+    return band, period.rate_for(band)
+
+
 def _costed_hours(hourly_usage: Hourly, periods: list[TariffPeriod]):
     """Yield (hour, local time, period, kWh) for every hour from the first costed hour to the newest."""
     if not hourly_usage or not periods:
