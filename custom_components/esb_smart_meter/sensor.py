@@ -479,6 +479,8 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
             if self.coordinator.data is None:
                 return
             hourly = self._hourly(esb_data=self.coordinator.data)
+            # Read with the rows, in the same step: a change during the awaits below is not what they hold
+            inputs = self._import_inputs()
             stored = (
                 await async_stored_hours(
                     self.hass, self._statistic_id, hourly[0][0], hourly[-1][0] + timedelta(hours=1)
@@ -503,7 +505,7 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
                 )
                 committed = await async_wait_committed(self.hass, self._statistic_id, series[-1][0], total)
             if full and committed:
-                await self._async_full_import_done(hourly)
+                await self._async_full_import_done(hourly, inputs)
             if total is not None:
                 self._cumulative = total
                 self.async_write_ha_state()
@@ -524,7 +526,11 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
         """Return the rows a full import writes; series that must clear old rows override this."""
         return hourly
 
-    async def _async_full_import_done(self, hourly: list[tuple[Any, float]]) -> None:
+    def _import_inputs(self) -> str | None:
+        """What this series' rows are computed from besides the download, if anything."""
+        return None
+
+    async def _async_full_import_done(self, hourly: list[tuple[Any, float]], inputs: str | None) -> None:
         """Run after a full import is readable; series that track their inputs override this."""
 
 
@@ -606,10 +612,13 @@ class BaseCostSensor(BaseHistorySensor):
             hour += timedelta(hours=1)
         return zeros + hourly
 
-    async def _async_full_import_done(self, hourly: list[tuple[Any, float]]) -> None:
-        await self._import_state().async_set_fingerprint(
-            fingerprint(tariff_periods(self._entry)), hourly[0][0] if hourly else None
-        )
+    def _import_inputs(self) -> str:
+        return fingerprint(tariff_periods(self._entry))
+
+    async def _async_full_import_done(self, hourly: list[tuple[Any, float]], inputs: str | None) -> None:
+        # The fingerprint of the periods the rows were costed with, not of those in force now: a period
+        # added while this import ran must still read as not costed, so the next update re-costs
+        await self._import_state().async_set_fingerprint(inputs, hourly[0][0] if hourly else None)
 
     @abstractmethod
     def _downloaded(self, *, esb_data: ESBData) -> list[tuple[Any, float]]:

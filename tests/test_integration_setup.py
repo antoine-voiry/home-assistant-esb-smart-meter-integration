@@ -13,6 +13,7 @@ from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
+from custom_components.esb_smart_meter import sensor as sensor_module
 from custom_components.esb_smart_meter.api_client import InvalidAuthException
 from custom_components.esb_smart_meter.const import (
     CONF_KEEP_ALIVE,
@@ -227,6 +228,48 @@ async def test_backfill_cost_and_recost_after_tariff_change(recorder_mock, hass,
         assert cost[-1] == pytest.approx(240 * 0.5)  # all history re-costed
         assert await _sums(hass, USAGE_ID) == usage  # kWh untouched
         fetch.assert_awaited_once()  # no re-download on a tariff change
+
+
+@pytest.mark.asyncio
+async def test_tariff_change_during_a_recost_is_recosted(recorder_mock, hass, enable_custom_integrations, session):
+    """A period changed while a re-cost is writing must not be recorded as already costed.
+
+    Adding periods one after another in the UI does this: the second change lands while the
+    first re-cost awaits the recorder.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MPRN,
+        data={CONF_USERNAME: "u@example.com", CONF_PASSWORD: "pw", CONF_MPRN: MPRN},
+        subentries_data=[ConfigSubentryData(data=TARIFF, subentry_type="tariff", title="t", unique_id="2020-01-01")],
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.esb_smart_meter.ESBDataApi.fetch", AsyncMock(return_value=_ten_days_of_usage())):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done(wait_background_tasks=True)
+        assert (await _sums(hass, COST_ID))[-1] == pytest.approx(240 * 0.30)
+
+        subentry = next(iter(entry.subentries.values()))
+        real_import = sensor_module.async_import_hourly_statistics
+        second_change = {"pending": True}
+
+        async def import_then_change(hass_, statistic_id, *args, **kwargs):
+            if statistic_id == COST_ID and second_change.pop("pending", False):
+                hass.config_entries.async_update_subentry(
+                    entry, subentry, data={**TARIFF, "day_rate": 0.7, "night_rate": 0.7, "peak_rate": 0.7}
+                )
+            return await real_import(hass_, statistic_id, *args, **kwargs)
+
+        with patch.object(sensor_module, "async_import_hourly_statistics", import_then_change):
+            hass.config_entries.async_update_subentry(
+                entry, subentry, data={**TARIFF, "day_rate": 0.5, "night_rate": 0.5, "peak_rate": 0.5}
+            )
+            await hass.async_block_till_done(wait_background_tasks=True)
+        assert not second_change  # the second change did land mid-import
+
+        cost = await _sums(hass, COST_ID)
+        assert cost[-1] == pytest.approx(240 * 0.7)  # all history at the latest rates, not only recent days
 
 
 @pytest.mark.asyncio
