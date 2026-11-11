@@ -640,11 +640,13 @@ Contributions are welcome! Here's how you can help:
 ### Submitting Pull Requests
 
 1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
+2. Create a feature branch from `develop`: `git checkout -b feature/my-feature develop`
 3. Make your changes
 4. Test thoroughly with Home Assistant
 5. Update documentation if needed
-6. Submit a pull request with clear description
+6. Submit a pull request against `develop` with clear description
+
+Changes are tested on `develop` before a release brings them to `master`.
 
 ### Development Setup
 
