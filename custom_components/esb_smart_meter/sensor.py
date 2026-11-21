@@ -483,7 +483,8 @@ class BaseHistorySensor(CoordinatorEntity[ESBDataUpdateCoordinator], SensorEntit
             if self.coordinator.data is None:
                 return
             hourly = self._hourly(esb_data=self.coordinator.data)
-            # Read with the rows, in the same step: a change during the awaits below is not what they hold
+            # Read together with the rows, so it describes the periods they were costed with
+            # even if a period changes while the import awaits the recorder
             inputs = self._import_inputs()
             stored = (
                 await async_stored_hours(
@@ -596,7 +597,7 @@ class BaseCostSensor(BaseHistorySensor):
         if await super()._needs_full_import(hourly, stored):
             return True
         stored_fingerprint = await self._import_state().async_get_fingerprint()
-        return stored_fingerprint != fingerprint(tariff_periods(self._entry))
+        return stored_fingerprint != self._import_inputs()
 
     async def _async_full_series(self, hourly: list[tuple[Any, float]]) -> list[tuple[Any, float]]:
         """Prepend zero-cost rows for hours costed before but no longer covered by a period.
@@ -622,6 +623,7 @@ class BaseCostSensor(BaseHistorySensor):
     async def _async_full_import_done(self, hourly: list[tuple[Any, float]], inputs: str | None) -> None:
         # The fingerprint of the periods the rows were costed with, not of those in force now: a period
         # added while this import ran must still read as not costed, so the next update re-costs
+        assert inputs is not None  # _import_inputs always returns a fingerprint for a cost series
         await self._import_state().async_set_fingerprint(inputs, hourly[0][0] if hourly else None)
 
     @abstractmethod
